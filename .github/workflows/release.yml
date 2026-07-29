@@ -32,7 +32,7 @@ jobs:
         run: flutter test
 
       - name: Build APK
-        run: flutter build apk --release
+        run: gradle -p android assembleRelease --no-daemon
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
