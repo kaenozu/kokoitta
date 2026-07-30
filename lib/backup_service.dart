@@ -30,6 +30,8 @@ class BackupService {
   static const int maxCompressedBytes = 700 * 1024 * 1024;
   static const int maxSinglePhotoBytes = 40 * 1024 * 1024;
   static const int maxUncompressedBytes = 900 * 1024 * 1024;
+  static const int maxManifestBytes = 512 * 1024;
+  static const int maxTripsBytes = 2 * 1024 * 1024;
 
   final DocumentsDirectoryProvider _documentsDirectoryProvider;
   final BackupFilePicker _backupFilePicker;

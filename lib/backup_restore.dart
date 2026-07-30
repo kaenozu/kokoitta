@@ -43,8 +43,28 @@ extension _BackupRestoreOperations on BackupService {
     }
     final entryNames = <String>{};
     for (final entry in archive.files) {
-      if (!entryNames.add(entry.name)) {
-        throw FormatException('ZIP内に重複したパスがあります: ${entry.name}');
+      if (!entry.isFile) {
+        throw FormatException(
+          '無効なバックアップです（ZIP内に不正なエントリがあります: ${entry.name}）',
+        );
+      }
+      final name = entry.name;
+      if (!_isValidEntryName(name)) {
+        throw FormatException(
+          '無効なバックアップです（ZIP内に不正なパスがあります: $name）',
+        );
+      }
+      if (name != 'manifest.json' &&
+          name != 'trips.json' &&
+          !name.startsWith('photos/')) {
+        throw FormatException(
+          '無効なバックアップです（不明なZIPエントリがあります: $name）',
+        );
+      }
+      if (!entryNames.add(name)) {
+        throw FormatException(
+          '無効なバックアップです（ZIP内に重複したパスがあります: $name）',
+        );
       }
     }
 
@@ -56,7 +76,19 @@ extension _BackupRestoreOperations on BackupService {
       );
     }
 
+    _validateMetadataEntrySize(
+      manifestFile,
+      name: 'manifest.json',
+      maxBytes: BackupService.maxManifestBytes,
+    );
+    _validateMetadataEntrySize(
+      tripsFile,
+      name: 'trips.json',
+      maxBytes: BackupService.maxTripsBytes,
+    );
+
     final manifest = _decodeMap(manifestFile, 'manifest.json');
+    _validateJsonValue(manifest, 'manifest.json');
     if (manifest['appId'] != BackupService.appId) {
       throw const FormatException('別のアプリのバックアップです');
     }
@@ -66,9 +98,11 @@ extension _BackupRestoreOperations on BackupService {
       throw const FormatException('対応していないバックアップ形式です');
     }
 
+    final rawTrips = _decodeJson(tripsFile, 'trips.json');
+    _validateJsonValue(rawTrips, 'trips.json');
     final parsed = formatVersion == 1
-        ? _parseVersion1(_decodeJson(tripsFile, 'trips.json'))
-        : _parseVersion2(_decodeJson(tripsFile, 'trips.json'));
+        ? _parseVersion1(rawTrips)
+        : _parseVersion2(rawTrips);
     if (parsed.trips.length > BackupService.maxTrips ||
         parsed.photoCount > BackupService.maxPhotos) {
       throw const FormatException('無料版の旅行数または写真枚数の上限を超えています');
@@ -229,6 +263,56 @@ Object? _decodeJson(ArchiveFile file, String name) {
     return jsonDecode(utf8.decode(bytes));
   } catch (error) {
     throw FormatException('$name を読み取れません: $error');
+  }
+}
+
+void _validateJsonValue(Object? value, String path, {int depth = 0}) {
+  if (depth > 16) {
+    throw FormatException('無効なバックアップです（データ構造が複雑すぎます）');
+  }
+  if (value is String) {
+    if (value.length > 500) {
+      throw FormatException('無効なバックアップです（異常に長い文字列があります）');
+    }
+  } else if (value is List) {
+    if (value.length > 500) {
+      throw FormatException('無効なバックアップです（データ量が多すぎます）');
+    }
+    for (var i = 0; i < value.length; i++) {
+      _validateJsonValue(value[i], '$path[$i]', depth: depth + 1);
+    }
+  } else if (value is Map) {
+    if (value.length > 100) {
+      throw FormatException('無効なバックアップです（データ量が多すぎます）');
+    }
+    for (final entry in value.entries) {
+      _validateJsonValue(entry.value, '$path/${entry.key}', depth: depth + 1);
+    }
+  }
+}
+
+bool _isValidEntryName(String name) {
+  if (name.isEmpty) return false;
+  if (name.startsWith('/')) return false;
+  if (name.contains('\\')) return false;
+  return !name.split('/').any((s) => s.isEmpty || s == '.' || s == '..');
+}
+
+void _validateMetadataEntrySize(
+  ArchiveFile file, {
+  required String name,
+  required int maxBytes,
+}) {
+  final size = file.size;
+  if (size <= 0) {
+    throw FormatException(
+      '無効なバックアップです（$nameの容量が正しくありません）',
+    );
+  }
+  if (size > maxBytes) {
+    throw FormatException(
+      '無効なバックアップです（$nameの容量が上限を超えています）',
+    );
   }
 }
 
