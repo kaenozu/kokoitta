@@ -55,10 +55,10 @@ AppData updatePrefectureState(
     return data;
   }
   return data.copyWith(
-    prefectureStates: <String, String>{
+    prefectureStates: normalizePrefectureStates(<String, String>{
       ...data.prefectureStates,
-      prefecture: normalizePrefectureState(state),
-    },
+      prefecture: state,
+    }),
   );
 }
 

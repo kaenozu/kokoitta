@@ -225,4 +225,43 @@ void main() {
 
     await expectLater(store.save(data), throwsStateError);
   });
+
+  test('保存JSONは常にcanonical化される', () async {
+    final photo = File('${temporaryDirectory.path}/canon.jpg');
+    await photo.writeAsBytes(<int>[1, 2, 3]);
+    final store = TripStore();
+    final data = AppData(
+      trips: <Trip>[
+        Trip(
+          id: 'bad-trip',
+          title: '  ',
+          photos: <File>[photo],
+        ),
+      ],
+      unassignedPhotos: const <File>[],
+      prefectureStates: const <String, String>{
+        '北海道': 'visited',
+        '未知県': 'invalid',
+      },
+    );
+    await store.save(data);
+
+    final preferences = await SharedPreferences.getInstance();
+    final stored = jsonDecode(preferences.getString(TripStore.dataKey)!)
+        as Map<String, dynamic>;
+
+    expect(stored['trips'], isEmpty);
+    expect(
+      (stored['unassignedPhotos'] as List).single,
+      photo.path,
+    );
+    expect(
+      (stored['prefectureStates'] as Map<String, dynamic>).keys,
+      containsAll(<String>['北海道']),
+    );
+    expect(
+      (stored['prefectureStates'] as Map<String, dynamic>).keys,
+      isNot(contains('未知県')),
+    );
+  });
 }
