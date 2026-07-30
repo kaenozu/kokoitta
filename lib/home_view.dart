@@ -17,6 +17,11 @@ extension _HomeView on _HomePageState {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
+          if (_importCompleted != null && _importTotal != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text('取り込み $_importCompleted / $_importTotal'),
+            ),
           IconButton(
             onPressed: _isDisabled || _loadError != null ? null : _addPhotos,
             icon: const Icon(Icons.add_photo_alternate_outlined),

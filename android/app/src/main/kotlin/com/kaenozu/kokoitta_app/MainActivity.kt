@@ -125,8 +125,15 @@ class MainActivity : FlutterActivity() {
         val incompleteTempFiles = mutableListOf<File>()
 
         try {
-            for ((index, uri) in uris.withIndex()) {
-                if (!coroutineContext.isActive) break
+        for ((index, uri) in uris.withIndex()) {
+            if (!coroutineContext.isActive) break
+
+            channel?.invokeMethod("sharedProgress", mapOf(
+                "requestId" to requestId,
+                "completed" to index,
+                "total" to receivedCount,
+                "phase" to "copying",
+            ))
 
                 val copyResult = withContext(Dispatchers.IO) {
                     copyUriToTempFile(uri, index)
@@ -172,6 +179,12 @@ class MainActivity : FlutterActivity() {
                         ))
                     }
                 }
+            channel?.invokeMethod("sharedProgress", mapOf(
+                "requestId" to requestId,
+                "completed" to index + 1,
+                "total" to receivedCount,
+                "phase" to "copying",
+            ))
             }
         } finally {
             for (file in incompleteTempFiles) {

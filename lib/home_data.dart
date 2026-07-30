@@ -67,6 +67,16 @@ extension _HomeDataActions on _HomePageState {
   }
 
   Future<dynamic> _handleShareMethod(MethodCall call) async {
+    if (call.method == 'sharedProgress') {
+      final args = call.arguments;
+      if (args is Map) {
+        _updateState(() {
+          _importCompleted = args['completed'] as int? ?? 0;
+          _importTotal = args['total'] as int? ?? 0;
+        });
+      }
+      return null;
+    }
     if (call.method != 'sharedUris') return null;
     await _initialization;
     if (_loadError != null) return null;
