@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -83,38 +84,72 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadTrips() async {
     final preferences = await SharedPreferences.getInstance();
-    final stored = preferences.getStringList('trips') ?? <String>[];
+    final storedJson = preferences.getString('trips_json');
     final loaded = <Trip>[];
-    for (final record in stored) {
-      final separator = record.indexOf('|');
-      if (separator <= 0) continue;
-      final title = record.substring(0, separator);
-      final paths = record.substring(separator + 1).split(';;').where((path) => path.isNotEmpty).map(File.new).where((file) => file.existsSync()).toList();
-      loaded.add(Trip(title, paths));
+    if (storedJson != null) {
+      try {
+        final List<dynamic> decoded = jsonDecode(storedJson);
+        for (final item in decoded) {
+          if (item is! Map<String, dynamic>) continue;
+          final title = item['title'] as String? ?? '';
+          final paths = (item['photos'] as List<dynamic>?)?.cast<String>() ?? <String>[];
+          final photos = paths.map(File.new).where((file) => file.existsSync()).toList();
+          loaded.add(Trip(title, photos));
+        }
+      } catch (e) {
+        debugPrint('Failed to load trips: $e');
+      }
+    } else {
+      // Legacy fallback for old delimiter format
+      final stored = preferences.getStringList('trips') ?? <String>[];
+      for (final record in stored) {
+        final separator = record.indexOf('|');
+        if (separator <= 0) continue;
+        final title = record.substring(0, separator);
+        final paths = record.substring(separator + 1).split(';;').where((path) => path.isNotEmpty).map(File.new).where((file) => file.existsSync()).toList();
+        loaded.add(Trip(title, paths));
+      }
     }
     if (mounted) setState(() => _trips.addAll(loaded));
   }
 
   Future<void> _saveTrips() async {
     final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList('trips', _trips.map((trip) => '${trip.title}|${trip.photos.map((file) => file.path).join(';;')}').toList());
+    final data = _trips.map((trip) => {
+      'title': trip.title,
+      'photos': trip.photos.map((file) => file.path).toList(),
+    }).toList();
+    await preferences.setString('trips_json', jsonEncode(data));
   }
 
   Future<void> _loadPrefectureStates() async {
     final preferences = await SharedPreferences.getInstance();
-    final stored = preferences.getStringList('prefectureStates') ?? <String>[];
+    final storedJson = preferences.getString('prefecture_states_json');
     if (!mounted) return;
     setState(() {
-      for (final value in stored) {
-        final separator = value.indexOf('|');
-        if (separator > 0) _prefectureStates[value.substring(0, separator)] = value.substring(separator + 1);
+      if (storedJson != null) {
+        try {
+          final Map<String, dynamic> decoded = jsonDecode(storedJson);
+          decoded.forEach((key, value) {
+            if (value is String) _prefectureStates[key] = value;
+          });
+        } catch (e) {
+          debugPrint('Failed to load prefecture states: $e');
+        }
+      } else {
+        // Legacy fallback
+        final stored = preferences.getStringList('prefectureStates') ?? <String>[];
+        for (final value in stored) {
+          final separator = value.indexOf('|');
+          if (separator > 0) _prefectureStates[value.substring(0, separator)] = value.substring(separator + 1);
+        }
       }
     });
   }
 
   Future<void> _savePrefectureStates() async {
     final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList('prefectureStates', _prefectureStates.entries.map((entry) => '${entry.key}|${entry.value}').toList());
+    await preferences.setString('prefecture_states_json', jsonEncode(_prefectureStates));
   }
 
   Future<void> _addPhotos() async {
