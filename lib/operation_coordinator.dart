@@ -42,11 +42,13 @@ class OperationCoordinator {
       throw StateError('Cannot mutate during restore session');
     }
     _pendingMutationCount += 1;
+    _notifyStatus();
     return _enqueue(
       OperationStatus.mutating,
       action,
       onFinally: () {
         _pendingMutationCount -= 1;
+        _notifyStatus();
       },
     );
   }
@@ -60,11 +62,13 @@ class OperationCoordinator {
       throw StateError('Cannot backup during restore session');
     }
     _hasBackupQueued = true;
+    _notifyStatus();
     return _enqueue(
       OperationStatus.backup,
       action,
       onFinally: () {
         _hasBackupQueued = false;
+        _notifyStatus();
       },
     );
   }
@@ -98,11 +102,13 @@ class OperationCoordinator {
       throw StateError('Restore commit already queued');
     }
     _hasRestoreCommitQueued = true;
+    _notifyStatus();
     return _enqueue(
       OperationStatus.mutating,
       action,
       onFinally: () {
         _hasRestoreCommitQueued = false;
+        _notifyStatus();
       },
     );
   }
@@ -162,6 +168,10 @@ class OperationCoordinator {
     if (!_isDisposed) {
       _statusController.add(newStatus);
     }
+  }
+
+  void _notifyStatus() {
+    if (!_isDisposed) _statusController.add(_status);
   }
 
   void dispose() {

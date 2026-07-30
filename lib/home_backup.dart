@@ -9,7 +9,7 @@ extension _HomeBackupActions on _HomePageState {
       builder: (sheetContext) => StreamBuilder<OperationStatus>(
         stream: _coordinator.statusStream,
         initialData: _coordinator.status,
-        builder: (_, __) => _buildBackupMenu(sheetContext),
+        builder: (context, snapshot) => _buildBackupMenu(sheetContext),
       ),
     );
   }
