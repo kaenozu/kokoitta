@@ -2,6 +2,15 @@
 
 写真から旅行の記録と都道府県の訪問状態を管理する Flutter Android アプリです。
 
+## 開発・貢献ガイドライン (マルチエージェントプロセス)
+
+本プロジェクトでは複数エージェントおよび開発者が安全に並列作業を行うためのガイドラインを定めています。
+
+- **エージェント向け運用ルール**: [AGENTS.md](AGENTS.md)
+- **コントリビューションガイド**: [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Issue 作成**: [Issue テンプレート](.github/ISSUE_TEMPLATE/task_template.md)
+- **PR 作成**: [PR テンプレート](.github/pull_request_template.md)
+
 ## 開発コマンド
 
 ```bash
