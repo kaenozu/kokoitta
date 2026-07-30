@@ -133,7 +133,8 @@ void main() {
         lessThanOrEqualTo(47));
   });
 
-  test('不正な状態値をunvisitedに正規化する', () async {
+  test('不正な状態値は保存時にunvisitedに正規化されprunedされる',
+      () async {
     final store = TripStore();
     final data = AppData(
       trips: const <Trip>[],
@@ -146,8 +147,8 @@ void main() {
     await store.save(data);
 
     final loaded = await store.load();
-    expect(loaded.prefectureStates['北海道'], 'unvisited');
-    expect(loaded.prefectureStates['東京'], 'unvisited');
+    expect(loaded.prefectureStates.containsKey('北海道'), isFalse);
+    expect(loaded.prefectureStates.containsKey('東京'), isFalse);
   });
 
   test('正規化後にprefectureStatesからunvisitedエントリが除外される',

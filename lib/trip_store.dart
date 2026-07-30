@@ -31,7 +31,9 @@ class TripStore {
     if (pending != null) {
       try {
         final recovered = _decode(pending);
-        await _writeNormalizedAppData(preferences, recovered);
+        final canonical = _canonicalize(recovered);
+        final encoded = jsonEncode(_encode(canonical));
+        await _writeCanonical(preferences, encoded);
         return recovered;
       } on FormatException {
         await preferences.remove(pendingKey);
@@ -41,7 +43,15 @@ class TripStore {
     final stored = preferences.getString(dataKey);
     if (stored != null) {
       final recovered = _decode(stored);
-      await _writeNormalizedAppData(preferences, recovered);
+      final canonical = _canonicalize(recovered);
+      final canonicalEncoded = jsonEncode(_encode(canonical));
+      if (canonicalEncoded != stored) {
+        final written =
+            await preferences.setString(dataKey, canonicalEncoded);
+        if (!written) {
+          throw FileSystemException('保存データを書き込めませんでした');
+        }
+      }
       return recovered;
     }
 
@@ -54,21 +64,10 @@ class TripStore {
     return migrated;
   }
 
-  Future<void> _writeNormalizedAppData(
-    SharedPreferences preferences,
-    AppData data,
-  ) async {
-    final encoded = jsonEncode(_encode(data));
-    final written = await preferences.setString(dataKey, encoded);
-    if (!written) {
-      throw FileSystemException('保存データを書き込めませんでした');
-    }
-    await preferences.remove(pendingKey);
-  }
-
   Future<void> save(AppData data) async {
     final preferences = await _preferencesFactory();
-    final encoded = jsonEncode(_encode(data));
+    final canonical = _canonicalize(data);
+    final encoded = jsonEncode(_encode(canonical));
 
     final pendingWritten = await preferences.setString(pendingKey, encoded);
     if (!pendingWritten) {
@@ -87,6 +86,30 @@ class TripStore {
       throw FileSystemException('保存データを書き込めませんでした');
     }
     await preferences.remove(pendingKey);
+  }
+
+  AppData _canonicalize(AppData data) {
+    final trips = <Trip>[];
+    var unassignedPhotos = <File>[...data.unassignedPhotos];
+
+    for (final trip in data.trips) {
+      final normalizedTitle = normalizeTripTitle(trip.title);
+      if (normalizedTitle == null) {
+        unassignedPhotos = [...unassignedPhotos, ...trip.photos];
+        continue;
+      }
+      trips.add(Trip(
+        id: trip.id,
+        title: normalizedTitle,
+        photos: trip.photos,
+      ));
+    }
+
+    return AppData(
+      trips: trips,
+      unassignedPhotos: unassignedPhotos,
+      prefectureStates: normalizePrefectureStates(data.prefectureStates),
+    );
   }
 
   AppData _decode(String raw) {
