@@ -67,6 +67,25 @@ class KokoittaApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
+      darkTheme: ThemeData(
+        colorScheme:
+            ColorScheme.fromSeed(
+              seedColor: const Color(0xff8fd3aa),
+              brightness: Brightness.dark,
+            ).copyWith(
+              primary: const Color(0xffb5e8c8),
+              secondary: const Color(0xffffa58f),
+            ),
+        cardTheme: CardThemeData(
+          elevation: 1,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          margin: EdgeInsets.zero,
+        ),
+        useMaterial3: true,
+      ),
+      themeMode: ThemeMode.system,
       home: const HomePage(),
     );
   }

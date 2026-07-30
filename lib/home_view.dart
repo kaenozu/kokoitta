@@ -115,22 +115,22 @@ extension _HomeView on _HomePageState {
         ),
         const SizedBox(height: 20),
         Card(
-          color: const Color(0xff1b4332),
+          color: Theme.of(context).colorScheme.primaryContainer,
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                const Icon(
+                Icon(
                   Icons.explore_outlined,
-                  color: Color(0xffc1ecd4),
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
                   size: 42,
                 ),
                 const SizedBox(height: 16),
-                const Text(
+                Text(
                   'まだ知らない場所へ',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
                   ),
@@ -138,13 +138,15 @@ extension _HomeView on _HomePageState {
                 const SizedBox(height: 6),
                 Text(
                   '${_data.prefectureStates.values.where((state) => state == 'visited').length} / 47 都道府県を訪問',
-                  style: const TextStyle(color: Color(0xffc1ecd4)),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
                 ),
                 const SizedBox(height: 20),
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xffff7051),
-                    foregroundColor: Colors.white,
+                    backgroundColor: Theme.of(context).colorScheme.secondary,
+                    foregroundColor: Theme.of(context).colorScheme.onSecondary,
                   ),
                   onPressed: _isDisabled ? null : _addPhotos,
                   icon: const Icon(Icons.add_a_photo),
