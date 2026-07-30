@@ -67,7 +67,7 @@ class PendingDeletionStore {
           .listSync()
           .whereType<File>()
           .where((file) => file.uri.pathSegments.last.startsWith('$index-'));
-      final source = candidates.firstOrNull;
+      final source = candidates.isEmpty ? null : candidates.first;
       if (source == null) continue;
       await original.parent.create(recursive: true);
       await source.rename(original.path);
@@ -85,7 +85,7 @@ class PendingDeletionStore {
       final candidates = trash.listSync().whereType<File>().where(
         (file) => file.uri.pathSegments.last.startsWith('$index-'),
       );
-      final source = candidates.firstOrNull;
+      final source = candidates.isEmpty ? null : candidates.first;
       if (source == null) continue;
       final destination = File(paths[index]);
       await destination.parent.create(recursive: true);
@@ -99,6 +99,3 @@ class PendingDeletionStore {
   }
 }
 
-extension PendingFirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
-}
