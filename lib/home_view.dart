@@ -1,18 +1,29 @@
 part of 'main.dart';
 
 extension _HomeView on _HomePageState {
+  bool get _isDisabled => _isLoading || _coordinator.isBusy;
+
   Widget _buildPage(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('ここいった'),
         actions: <Widget>[
+          if (_coordinator.isBusy)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
           IconButton(
-            onPressed: _isLoading || _loadError != null ? null : _addPhotos,
+            onPressed: _isDisabled || _loadError != null ? null : _addPhotos,
             icon: const Icon(Icons.add_photo_alternate_outlined),
             tooltip: '写真を追加',
           ),
           IconButton(
-            onPressed: _isLoading ? null : _showBackupMenu,
+            onPressed: _isDisabled ? null : _showBackupMenu,
             icon: const Icon(Icons.settings_outlined),
             tooltip: '設定',
           ),
@@ -38,7 +49,7 @@ extension _HomeView on _HomePageState {
       floatingActionButton: _isLoading || _loadError != null
           ? null
           : FloatingActionButton.extended(
-              onPressed: _addPhotos,
+              onPressed: _isDisabled ? null : _addPhotos,
               icon: const Icon(Icons.add_a_photo),
               label: const Text('写真を追加'),
             ),
@@ -86,20 +97,17 @@ extension _HomeView on _HomePageState {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text(
-                  'こんにちは',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
+                Text('こんにちは', style: Theme.of(context).textTheme.bodyMedium),
                 Text(
                   '旅の記録',
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
             IconButton(
-              onPressed: _showBackupMenu,
+              onPressed: _isDisabled ? null : _showBackupMenu,
               icon: const Icon(Icons.tune),
               tooltip: '設定',
             ),
@@ -138,7 +146,7 @@ extension _HomeView on _HomePageState {
                     backgroundColor: const Color(0xffff7051),
                     foregroundColor: Colors.white,
                   ),
-                  onPressed: _addPhotos,
+                  onPressed: _isDisabled ? null : _addPhotos,
                   icon: const Icon(Icons.add_a_photo),
                   label: const Text('写真を読み込む'),
                 ),
@@ -149,9 +157,9 @@ extension _HomeView on _HomePageState {
         const SizedBox(height: 28),
         Text(
           '都道府県マップ',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 12),
         Card(
@@ -168,11 +176,13 @@ extension _HomeView on _HomePageState {
                     state == 'visited'
                         ? Icons.check
                         : state == 'transit'
-                            ? Icons.directions_car
-                            : Icons.circle_outlined,
+                        ? Icons.directions_car
+                        : Icons.circle_outlined,
                     size: 16,
                   ),
-                  onPressed: () => _updatePrefecture(name, state),
+                  onPressed: _isDisabled
+                      ? null
+                      : () => _updatePrefecture(name, state),
                 );
               }).toList(),
             ),
@@ -184,9 +194,9 @@ extension _HomeView on _HomePageState {
           children: <Widget>[
             Text(
               '最近の旅行',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             TextButton(
               onPressed: () => _updateState(() => _tab = 1),
@@ -250,7 +260,7 @@ extension _HomeView on _HomePageState {
             const Text('旅行がありません'),
             const SizedBox(height: 16),
             FilledButton.icon(
-              onPressed: _addPhotos,
+              onPressed: _isDisabled ? null : _addPhotos,
               icon: const Icon(Icons.add_a_photo),
               label: const Text('写真を追加'),
             ),
@@ -259,8 +269,8 @@ extension _HomeView on _HomePageState {
       );
     }
 
-    final itemCount = _data.trips.length +
-        (_data.unassignedPhotos.isEmpty ? 0 : 1);
+    final itemCount =
+        _data.trips.length + (_data.unassignedPhotos.isEmpty ? 0 : 1);
     return ListView.builder(
       padding: const EdgeInsets.all(12),
       itemCount: itemCount,
@@ -349,16 +359,11 @@ extension _HomeView on _HomePageState {
                     ),
                   ),
                   PopupMenuButton<String>(
+                    enabled: !_isDisabled,
                     onSelected: (value) => _handleTripMenu(trip, value),
                     itemBuilder: (_) => const <PopupMenuEntry<String>>[
-                      PopupMenuItem(
-                        value: 'move',
-                        child: Text('旅行未設定へ移動'),
-                      ),
-                      PopupMenuItem(
-                        value: 'delete',
-                        child: Text('写真も削除'),
-                      ),
+                      PopupMenuItem(value: 'move', child: Text('旅行未設定へ移動')),
+                      PopupMenuItem(value: 'delete', child: Text('写真も削除')),
                     ],
                   ),
                 ],
@@ -378,9 +383,8 @@ extension _HomeView on _HomePageState {
       photos.first,
       width: double.infinity,
       fit: BoxFit.cover,
-      errorBuilder: (_, _, _) => const Center(
-        child: Icon(Icons.broken_image_outlined, size: 48),
-      ),
+      errorBuilder: (_, _, _) =>
+          const Center(child: Icon(Icons.broken_image_outlined, size: 48)),
     );
   }
 
@@ -401,10 +405,7 @@ extension _HomeView on _HomePageState {
                 style: Theme.of(sheetContext).textTheme.titleLarge,
               ),
               const SizedBox(height: 16),
-              SizedBox(
-                height: 260,
-                child: _photoGrid(trip.photos),
-              ),
+              SizedBox(height: 260, child: _photoGrid(trip.photos)),
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 onPressed: () => _shareFiles(trip.photos, trip.title),
@@ -413,10 +414,12 @@ extension _HomeView on _HomePageState {
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.pop(sheetContext);
-                  _addPhotos(tripId: trip.id);
-                },
+                onPressed: _isDisabled
+                    ? null
+                    : () {
+                        Navigator.pop(sheetContext);
+                        _addPhotos(tripId: trip.id);
+                      },
                 icon: const Icon(Icons.add),
                 label: const Text('この旅行に写真を追加'),
               ),
@@ -439,27 +442,18 @@ extension _HomeView on _HomePageState {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(
-                '旅行未設定',
-                style: Theme.of(sheetContext).textTheme.titleLarge,
-              ),
+              Text('旅行未設定', style: Theme.of(sheetContext).textTheme.titleLarge),
               const SizedBox(height: 16),
-              SizedBox(
-                height: 260,
-                child: _photoGrid(_data.unassignedPhotos),
-              ),
+              SizedBox(height: 260, child: _photoGrid(_data.unassignedPhotos)),
               const SizedBox(height: 12),
               OutlinedButton.icon(
-                onPressed: () => _shareFiles(
-                  _data.unassignedPhotos,
-                  '旅行未設定',
-                ),
+                onPressed: () => _shareFiles(_data.unassignedPhotos, '旅行未設定'),
                 icon: const Icon(Icons.share),
                 label: const Text('写真を共有'),
               ),
               const SizedBox(height: 8),
               FilledButton.icon(
-                onPressed: _createTripFromUnassigned,
+                onPressed: _isDisabled ? null : _createTripFromUnassigned,
                 icon: const Icon(Icons.photo_album_outlined),
                 label: const Text('新しい旅行にまとめる'),
               ),

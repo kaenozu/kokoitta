@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import 'app_data_operations.dart';
 import 'backup_service.dart';
 import 'models.dart';
+import 'operation_coordinator.dart';
 import 'storage_cleanup.dart';
 import 'trip_store.dart';
 import 'validators.dart';
@@ -28,14 +29,15 @@ class KokoittaApp extends StatelessWidget {
     return MaterialApp(
       title: 'ここいった',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xff1b4332),
-          brightness: Brightness.light,
-        ).copyWith(
-          primary: const Color(0xff1b4332),
-          secondary: const Color(0xffff7051),
-          surface: const Color(0xfffcf9f8),
-        ),
+        colorScheme:
+            ColorScheme.fromSeed(
+              seedColor: const Color(0xff1b4332),
+              brightness: Brightness.light,
+            ).copyWith(
+              primary: const Color(0xff1b4332),
+              secondary: const Color(0xffff7051),
+              surface: const Color(0xfffcf9f8),
+            ),
         scaffoldBackgroundColor: const Color(0xfffcf9f8),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xfffcf9f8),
@@ -71,15 +73,18 @@ class KokoittaApp extends StatelessWidget {
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.operationCoordinator});
+
+  final OperationCoordinator? operationCoordinator;
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
-  static const MethodChannel _shareChannel =
-      MethodChannel('com.kaenozu.kokoitta/share');
+  static const MethodChannel _shareChannel = MethodChannel(
+    'com.kaenozu.kokoitta/share',
+  );
   static const int _maxTrips = 10;
   static const int _maxPhotos = 300;
 
@@ -88,23 +93,30 @@ class _HomePageState extends State<HomePage> {
   final TripStore _store = TripStore();
   final List<String> _prefectures = validPrefectures.toList(growable: false);
 
+  late final OperationCoordinator _coordinator;
   AppData _data = AppData.empty();
-  Future<void> _mutationQueue = Future<void>.value();
   late final Future<void> _initialization;
   bool _isLoading = true;
   String? _loadError;
   int _tab = 0;
   bool _isCleanupRunning = false;
+  StreamSubscription<OperationStatus>? _statusSub;
 
   @override
   void initState() {
     super.initState();
+    _coordinator = widget.operationCoordinator ?? OperationCoordinator();
     _initialization = _initialize();
     _shareChannel.setMethodCallHandler(_handleShareMethod);
+    _statusSub = _coordinator.statusStream.listen((_) {
+      if (mounted) _updateState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _statusSub?.cancel();
+    _coordinator.dispose();
     _shareChannel.setMethodCallHandler(null);
     super.dispose();
   }

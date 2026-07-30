@@ -6,41 +6,59 @@ extension _HomeBackupActions on _HomePageState {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'データ保護',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
+      builder: (sheetContext) => StreamBuilder<OperationStatus>(
+        stream: _coordinator.statusStream,
+        initialData: _coordinator.status,
+        builder: (context, snapshot) => _buildBackupMenu(sheetContext),
+      ),
+    );
+  }
+
+  Widget _buildBackupMenu(BuildContext sheetContext) {
+    final isAnyBusy = _coordinator.isBusy;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'データ保護',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 12),
-              ListTile(
-                enabled: _loadError == null,
-                leading: const Icon(Icons.backup_outlined),
-                title: const Text('完全バックアップを作成'),
-                subtitle: const Text('旅行・旅行未設定・地図状態・写真をZIPに保存'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _createBackup();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.restore),
-                title: const Text('完全復元'),
-                subtitle: const Text('検証後、現在のデータを安全に置き換え'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _restoreBackup();
-                },
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              enabled: _loadError == null && !isAnyBusy,
+              leading: const Icon(Icons.backup_outlined),
+              title: const Text('完全バックアップを作成'),
+              subtitle: _coordinator.isBackingUp
+                  ? const Text('バックアップ作成中…')
+                  : const Text('旅行・旅行未設定・地図状態・写真をZIPに保存'),
+              onTap: isAnyBusy
+                  ? null
+                  : () {
+                      Navigator.pop(sheetContext);
+                      _createBackup();
+                    },
+            ),
+            ListTile(
+              enabled: !isAnyBusy,
+              leading: const Icon(Icons.restore),
+              title: const Text('完全復元'),
+              subtitle: _coordinator.isRestoring
+                  ? const Text('復元処理中…')
+                  : const Text('検証後、現在のデータを安全に置き換え'),
+              onTap: isAnyBusy
+                  ? null
+                  : () {
+                      Navigator.pop(sheetContext);
+                      _restoreBackup();
+                    },
+            ),
+          ],
         ),
       ),
     );
@@ -48,20 +66,32 @@ extension _HomeBackupActions on _HomePageState {
 
   Future<void> _createBackup() async {
     try {
-      final file = await _backupService.createBackup(_data);
-      if (!mounted) return;
-      await _backupService.shareBackup(file);
-      _showMessage('バックアップを共有しました。端末内には最新5件まで保持されます。');
+      final file = await _coordinator.runBackup(
+        () => _backupService.createBackup(_data),
+      );
+      if (mounted) {
+        await _backupService.shareBackup(file);
+        _showMessage('バックアップを共有しました。端末内には最新5件まで保持されます。');
+      }
     } catch (error) {
+      if (!mounted) return;
       _showError('バックアップ作成', error);
     }
   }
 
   Future<void> _restoreBackup() async {
     PreparedRestore? prepared;
+    var restoreSessionStarted = false;
     try {
+      _coordinator.beginRestorePrepare();
+      restoreSessionStarted = true;
       prepared = await _backupService.prepareRestore();
-      if (prepared == null || !mounted) return;
+      if (prepared == null || !mounted) {
+        _coordinator.endRestore();
+        return;
+      }
+
+      _coordinator.enterRestoreConfirm();
       final confirmed = await _confirm(
         title: '完全復元',
         message:
@@ -70,10 +100,11 @@ extension _HomeBackupActions on _HomePageState {
       );
       if (!confirmed) {
         await prepared.discard();
+        _coordinator.endRestore();
         return;
       }
 
-      await _enqueueMutation(() async {
+      await _coordinator.runRestoreCommit(() async {
         final current = _data;
         final oldFiles = current.allPhotos.toList(growable: false);
         final safetyBackup = await _backupService.createSafetySnapshot(current);
@@ -94,8 +125,11 @@ extension _HomeBackupActions on _HomePageState {
               : '復元は完了しましたが、旧写真$cleanupFailures枚の削除に失敗しました',
         );
       });
+      if (mounted) _coordinator.endRestore();
     } catch (error) {
       if (prepared != null) await prepared.discard();
+      if (restoreSessionStarted && mounted) _coordinator.endRestore();
+      if (!mounted) return;
       _showError('復元', error);
     }
   }
@@ -110,9 +144,7 @@ extension _HomeBackupActions on _HomePageState {
       return;
     }
     try {
-      await SharePlus.instance.share(
-        ShareParams(files: files, text: title),
-      );
+      await SharePlus.instance.share(ShareParams(files: files, text: title));
     } catch (error) {
       _showError('写真の共有', error);
     }
@@ -164,9 +196,9 @@ extension _HomeBackupActions on _HomePageState {
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _showError(String action, Object error) {
