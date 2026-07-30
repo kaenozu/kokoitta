@@ -43,6 +43,7 @@ void main() {
       MaterialApp(home: HomePage(operationCoordinator: coordinator)),
     );
     await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 200));
 
     final hold = Completer<void>();
     final mutation = coordinator.runMutation(() => hold.future);
