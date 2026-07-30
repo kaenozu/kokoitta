@@ -76,16 +76,16 @@ extension _BackupRestoreOperations on BackupService {
       );
     }
 
-    if (manifestFile.size > BackupService.maxManifestBytes) {
-      throw const FormatException(
-        '無効なバックアップです（manifest.jsonの容量が上限を超えています）',
-      );
-    }
-    if (tripsFile.size > BackupService.maxTripsBytes) {
-      throw const FormatException(
-        '無効なバックアップです（trips.jsonの容量が上限を超えています）',
-      );
-    }
+    _validateMetadataEntrySize(
+      manifestFile,
+      name: 'manifest.json',
+      maxBytes: BackupService.maxManifestBytes,
+    );
+    _validateMetadataEntrySize(
+      tripsFile,
+      name: 'trips.json',
+      maxBytes: BackupService.maxTripsBytes,
+    );
 
     final manifest = _decodeMap(manifestFile, 'manifest.json');
     _validateJsonValue(manifest, 'manifest.json');
@@ -296,6 +296,24 @@ bool _isValidEntryName(String name) {
   if (name.startsWith('/')) return false;
   if (name.contains('\\')) return false;
   return !name.split('/').any((s) => s.isEmpty || s == '.' || s == '..');
+}
+
+void _validateMetadataEntrySize(
+  ArchiveFile file, {
+  required String name,
+  required int maxBytes,
+}) {
+  final size = file.size;
+  if (size <= 0) {
+    throw FormatException(
+      '無効なバックアップです（$nameの容量が正しくありません）',
+    );
+  }
+  if (size > maxBytes) {
+    throw FormatException(
+      '無効なバックアップです（$nameの容量が上限を超えています）',
+    );
+  }
 }
 
 _ParsedBackup _parseVersion1(Object? value) {

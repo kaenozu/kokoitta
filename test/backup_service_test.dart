@@ -128,6 +128,60 @@ void main() {
     );
   });
 
+  test('サイズ0のmanifest.jsonを展開前に拒否する', () async {
+    final validBackup = await service.createBackup(AppData(
+      trips: <Trip>[],
+      unassignedPhotos: const <File>[],
+      prefectureStates: const <String, String>{},
+    ));
+    final decoded = ZipDecoder().decodeBytes(await validBackup.readAsBytes());
+    decoded.files
+        .firstWhere((f) => f.name == 'manifest.json')
+        .size = 0;
+    final encoded = ZipEncoder().encode(decoded);
+
+    await expectLater(
+      service.prepareRestoreBytes(encoded),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('サイズ0のtrips.jsonを展開前に拒否する', () async {
+    final validBackup = await service.createBackup(AppData(
+      trips: <Trip>[],
+      unassignedPhotos: const <File>[],
+      prefectureStates: const <String, String>{},
+    ));
+    final decoded = ZipDecoder().decodeBytes(await validBackup.readAsBytes());
+    decoded.files
+        .firstWhere((f) => f.name == 'trips.json')
+        .size = 0;
+    final encoded = ZipEncoder().encode(decoded);
+
+    await expectLater(
+      service.prepareRestoreBytes(encoded),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('負数サイズが上限超過として拒否される', () async {
+    final validBackup = await service.createBackup(AppData(
+      trips: <Trip>[],
+      unassignedPhotos: const <File>[],
+      prefectureStates: const <String, String>{},
+    ));
+    final decoded = ZipDecoder().decodeBytes(await validBackup.readAsBytes());
+    decoded.files
+        .firstWhere((f) => f.name == 'manifest.json')
+        .size = -1;
+    final encoded = ZipEncoder().encode(decoded);
+
+    await expectLater(
+      service.prepareRestoreBytes(encoded),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
   test('高圧縮率の巨大JSONを模したZIPを拒否する', () async {
     final archive = Archive();
     final hugeDeclaredSize = BackupService.maxTripsBytes + 100;
