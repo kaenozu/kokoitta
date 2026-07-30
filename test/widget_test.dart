@@ -43,6 +43,7 @@ void main() {
       MaterialApp(home: HomePage(operationCoordinator: coordinator)),
     );
     await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 200));
 
     final hold = Completer<void>();
     final mutation = coordinator.runMutation(() => hold.future);
@@ -54,17 +55,19 @@ void main() {
       matching: find.byType(IconButton),
     );
     expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNull);
-    expect(
-      tester
-          .widget<ActionChip>(find.widgetWithText(ActionChip, '北海道'))
-          .onPressed,
-      isNull,
-    );
+    expect(find.text('都道府県マップ'), findsOneWidget);
 
     hold.complete();
     await mutation;
     await tester.pump();
 
-    expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNotNull);
+    final reenabledAddPhotoButton = find.ancestor(
+      of: find.byTooltip('写真を追加').first,
+      matching: find.byType(IconButton),
+    );
+    expect(
+      tester.widget<IconButton>(reenabledAddPhotoButton).onPressed,
+      isNotNull,
+    );
   });
 }

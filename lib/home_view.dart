@@ -1,7 +1,16 @@
 part of 'main.dart';
 
 extension _HomeView on _HomePageState {
-  bool get _isDisabled => _isLoading || _coordinator.isBusy;
+  static const _photoQuota = 300;
+
+  int get _photoCount =>
+      _data.unassignedPhotos.length +
+      _data.trips.fold<int>(0, (total, trip) => total + trip.photos.length);
+
+  bool get _photoQuotaReached => _photoCount >= _photoQuota;
+
+  bool get _isDisabled =>
+      _isLoading || _coordinator.isBusy || _photoQuotaReached;
 
   Widget _buildPage(BuildContext context) {
     return Scaffold(
@@ -23,7 +32,9 @@ extension _HomeView on _HomePageState {
               child: Text('取り込み $_importCompleted / $_importTotal'),
             ),
           IconButton(
-            onPressed: _isDisabled || _loadError != null ? null : _addPhotos,
+            onPressed: _isDisabled || _loadError != null || _photoQuotaReached
+                ? null
+                : _addPhotos,
             icon: const Icon(Icons.add_photo_alternate_outlined),
             tooltip: '写真を追加',
           ),
@@ -158,6 +169,25 @@ extension _HomeView on _HomePageState {
                   label: const Text('写真を読み込む'),
                 ),
               ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Semantics(
+          liveRegion: true,
+          label:
+              '写真使用数 $_photoCount枚、上限 $_photoQuota枚、残り${(_photoQuota - _photoCount).clamp(0, _photoQuota)}枚',
+          child: Card(
+            child: ListTile(
+              leading: Icon(
+                _photoQuotaReached ? Icons.block : Icons.photo_library_outlined,
+              ),
+              title: Text('写真 $_photoCount / $_photoQuota枚'),
+              subtitle: Text(
+                _photoQuotaReached
+                    ? '上限に達しています。既存の写真を整理してください'
+                    : '残り ${(_photoQuota - _photoCount).clamp(0, _photoQuota)}枚',
+              ),
             ),
           ),
         ),
