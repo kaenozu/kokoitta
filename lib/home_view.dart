@@ -475,12 +475,76 @@ extension _HomeView on _HomePageState {
         mainAxisSpacing: 4,
       ),
       itemCount: photos.length,
-      itemBuilder: (_, index) => Image.file(
-        photos[index],
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => const ColoredBox(
-          color: Color(0xffeeeeee),
-          child: Icon(Icons.broken_image_outlined),
+      itemBuilder: (_, index) => Semantics(
+        button: true,
+        label: '写真 ${index + 1} / ${photos.length} を拡大表示',
+        child: GestureDetector(
+          onTap: () => _showPhotoViewer(photos, index),
+          child: Image.file(
+            photos[index],
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => const ColoredBox(
+              color: Color(0xffeeeeee),
+              child: Icon(Icons.broken_image_outlined),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+extension _PhotoViewerActions on _HomePageState {
+  void _showPhotoViewer(List<File> photos, int initialIndex) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) =>
+            _PhotoViewer(photos: photos, initialIndex: initialIndex),
+      ),
+    );
+  }
+}
+
+class _PhotoViewer extends StatefulWidget {
+  const _PhotoViewer({required this.photos, required this.initialIndex});
+
+  final List<File> photos;
+  final int initialIndex;
+
+  @override
+  State<_PhotoViewer> createState() => _PhotoViewerState();
+}
+
+class _PhotoViewerState extends State<_PhotoViewer> {
+  late final PageController _controller = PageController(
+    initialPage: widget.initialIndex,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('写真')),
+      body: PageView.builder(
+        controller: _controller,
+        itemCount: widget.photos.length,
+        itemBuilder: (context, index) => InteractiveViewer(
+          minScale: 1,
+          maxScale: 4,
+          child: Center(
+            child: Image.file(
+              widget.photos[index],
+              fit: BoxFit.contain,
+              errorBuilder: (_, _, _) =>
+                  const Icon(Icons.broken_image_outlined, size: 72),
+            ),
+          ),
         ),
       ),
     );
