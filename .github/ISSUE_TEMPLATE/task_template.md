@@ -31,11 +31,18 @@ assignees: ''
 <!-- 同時編集注意・原則禁止のファイルがあれば挙げてください -->
 
 ## Branch
-<!-- 担当ブランチ名を指定してください (例: agent/XX-feature-name) -->
+<!-- 担当ブランチ名を指定してください (例: agent/<issue-number>-<task-name>) -->
 
 ## Worktree
-<!-- 担当エージェント自身が作成する専用 Worktree 名を指定してください (例: kokoitta-agent-XX) -->
+<!-- 担当エージェント自身が作成する専用 Worktree 名を指定してください (例: kokoitta-agent-<issue-number>) -->
 ※ 担当エージェントは指定されたディレクトリ名で自ら Git worktree を作成して作業を行ってください。
+
+## Project
+- Project: <!-- 対象プロジェクト名または指定がない場合は特定手順に従う -->
+- Initial Status: Todo
+- Start Status: In Progress
+- Review Status: In Review
+- Completion Status: Done
 
 ## Validation
 <!-- 実行すべき検証手順・テスト内容を記述してください -->
@@ -48,3 +55,4 @@ assignees: ''
 - [ ] 未確認事項または残存リスク
 - [ ] 依存Issueへの影響
 - [ ] PR URL
+- [ ] GitHub ProjectsのStatus更新結果（更新不可時はエラー報告）

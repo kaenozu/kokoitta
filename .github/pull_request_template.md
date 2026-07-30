@@ -35,6 +35,11 @@ Closes #
 - **Branch**:
 - **Worktree**:
 
+## Project Status
+- [ ] 担当Issueを`In Review`へ変更した
+- [ ] Projects更新に失敗した場合、その内容をIssueへ報告した
+※ マージ後の `Done` への遷移は Coordinator または GitHub Projects の自動化で確認されます。
+
 ## 最終確認チェックボックス
 - [ ] 担当エージェント自身で専用 Worktree を作成し作業を行った
 - [ ] ホットスポット・変更禁止範囲を侵していない
