@@ -73,8 +73,10 @@ extension _HomeBackupActions on _HomePageState {
 
   Future<void> _restoreBackup() async {
     PreparedRestore? prepared;
+    var restoreSessionStarted = false;
     try {
       _coordinator.beginRestorePrepare();
+      restoreSessionStarted = true;
       prepared = await _backupService.prepareRestore();
       if (prepared == null || !mounted) {
         _coordinator.endRestore();
@@ -118,7 +120,7 @@ extension _HomeBackupActions on _HomePageState {
       if (mounted) _coordinator.endRestore();
     } catch (error) {
       if (prepared != null) await prepared.discard();
-      if (mounted) _coordinator.endRestore();
+      if (restoreSessionStarted && mounted) _coordinator.endRestore();
       if (!mounted) return;
       _showError('復元', error);
     }

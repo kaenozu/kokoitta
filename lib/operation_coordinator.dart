@@ -13,6 +13,9 @@ class OperationCoordinator {
   final _statusController = StreamController<OperationStatus>.broadcast();
   Future<void> _queue = Future<void>.value();
   OperationStatus _status = OperationStatus.idle;
+  bool _hasBackupQueued = false;
+  bool _hasRestoreSession = false;
+  bool _isDisposed = false;
 
   OperationStatus get status => _status;
   Stream<OperationStatus> get statusStream => _statusController.stream;
@@ -30,62 +33,122 @@ class OperationCoordinator {
   bool get isBackingUp => _status == OperationStatus.backup;
 
   Future<T> runMutation<T>(Future<T> Function() action) {
+    _ensureNotDisposed();
+    if (_hasRestoreSession) {
+      throw StateError('Cannot mutate during restore session');
+    }
     return _enqueue(OperationStatus.mutating, action);
   }
 
   Future<T> runBackup<T>(Future<T> Function() action) {
-    if (_status == OperationStatus.backup) {
+    _ensureNotDisposed();
+    if (_hasBackupQueued || _status == OperationStatus.backup) {
       throw StateError('Backup already in progress');
     }
-    return _enqueue(OperationStatus.backup, action);
+    if (_hasRestoreSession) {
+      throw StateError('Cannot backup during restore session');
+    }
+    _hasBackupQueued = true;
+    return _enqueue(
+      OperationStatus.backup,
+      action,
+      onFinally: () {
+        _hasBackupQueued = false;
+      },
+    );
   }
 
   void beginRestorePrepare() {
-    if (isRestoring) {
-      throw StateError('Restore already in progress');
+    _ensureNotDisposed();
+    if (isBusy) {
+      throw StateError('Cannot begin restore preparation while busy');
     }
+    if (_hasBackupQueued) {
+      throw StateError(
+        'Cannot begin restore preparation while operation queued',
+      );
+    }
+    if (_hasRestoreSession) {
+      throw StateError('Restore session already in progress');
+    }
+    _hasRestoreSession = true;
     _updateStatus(OperationStatus.restorePrepare);
   }
 
   void enterRestoreConfirm() {
+    _ensureNotDisposed();
+    if (_status != OperationStatus.restorePrepare) {
+      throw StateError('Must be in restorePrepare state to enter confirm');
+    }
     _updateStatus(OperationStatus.restoreConfirm);
   }
 
+  Future<T> runRestoreCommit<T>(Future<T> Function() action) {
+    _ensureNotDisposed();
+    if (_status != OperationStatus.restoreConfirm) {
+      throw StateError('Must be in restoreConfirm state to commit');
+    }
+    return _enqueue(OperationStatus.mutating, action);
+  }
+
   void endRestore() {
+    _ensureNotDisposed();
+    if (!_hasRestoreSession) {
+      throw StateError('No restore session in progress');
+    }
+    _hasRestoreSession = false;
     _updateStatus(OperationStatus.idle);
   }
 
-  Future<T> runRestoreCommit<T>(Future<T> Function() action) {
-    return _enqueue(OperationStatus.mutating, action);
+  void _ensureNotDisposed() {
+    if (_isDisposed) throw StateError('Coordinator is disposed');
   }
 
   Future<T> _enqueue<T>(
     OperationStatus newStatus,
-    Future<T> Function() action,
-  ) {
+    Future<T> Function() action, {
+    void Function()? onFinally,
+  }) {
     final completer = Completer<T>();
-    _queue = _queue.then((_) async {
-      _updateStatus(newStatus);
-      try {
-        completer.complete(await action());
-      } catch (error, stackTrace) {
-        _updateStatus(OperationStatus.failed);
-        if (!completer.isCompleted) {
-          completer.completeError(error, stackTrace);
-        }
-        return;
-      }
-      _updateStatus(OperationStatus.idle);
-    });
+    _queue = _queue
+        .then((_) async {
+          if (_isDisposed) {
+            if (!completer.isCompleted) {
+              completer.completeError(StateError('Coordinator is disposed'));
+            }
+            return;
+          }
+          _updateStatus(newStatus);
+          try {
+            final result = await action();
+            _updateStatus(OperationStatus.idle);
+            if (!completer.isCompleted) {
+              completer.complete(result);
+            }
+          } catch (error, stackTrace) {
+            _updateStatus(OperationStatus.failed);
+            if (!completer.isCompleted) {
+              completer.completeError(error, stackTrace);
+            }
+          }
+        })
+        .whenComplete(() {
+          onFinally?.call();
+        });
     return completer.future;
   }
 
   void _updateStatus(OperationStatus newStatus) {
     _status = newStatus;
-    _statusController.add(newStatus);
+    if (!_isDisposed) {
+      _statusController.add(newStatus);
+    }
   }
 
   void dispose() {
+    _isDisposed = true;
+    _hasRestoreSession = false;
+    _hasBackupQueued = false;
     _statusController.close();
   }
 }

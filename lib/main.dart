@@ -98,19 +98,21 @@ class _HomePageState extends State<HomePage> {
   String? _loadError;
   int _tab = 0;
   bool _isCleanupRunning = false;
+  StreamSubscription<OperationStatus>? _statusSub;
 
   @override
   void initState() {
     super.initState();
     _initialization = _initialize();
     _shareChannel.setMethodCallHandler(_handleShareMethod);
-    _coordinator.statusStream.listen((_) {
+    _statusSub = _coordinator.statusStream.listen((_) {
       if (mounted) _updateState(() {});
     });
   }
 
   @override
   void dispose() {
+    _statusSub?.cancel();
     _coordinator.dispose();
     _shareChannel.setMethodCallHandler(null);
     super.dispose();

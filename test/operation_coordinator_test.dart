@@ -70,6 +70,16 @@ void main() {
       expect(coordinator.status, OperationStatus.idle);
     });
 
+    test('same-tick double backup rejects second call', () {
+      coordinator.runBackup(() async {});
+      expect(() => coordinator.runBackup(() async {}), throwsStateError);
+    });
+
+    test('same-tick double restore preparation rejects second call', () {
+      coordinator.beginRestorePrepare();
+      expect(() => coordinator.beginRestorePrepare(), throwsStateError);
+    });
+
     test('runBackup allows new backup after completion', () async {
       await coordinator.runBackup(() async {});
       await coordinator.runBackup(() async {});
@@ -83,7 +93,34 @@ void main() {
       expect(() => coordinator.beginRestorePrepare(), throwsStateError);
     });
 
-    test('restore lifecycle: prepare → confirm → commit → end', () async {
+    test('beginRestorePrepare rejects when backup queued', () {
+      coordinator.runBackup(() async {});
+      expect(() => coordinator.beginRestorePrepare(), throwsStateError);
+    });
+
+    test('beginRestorePrepare rejects during mutation', () async {
+      final hold = Completer<void>();
+      coordinator.runMutation(() async {
+        await hold.future;
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(() => coordinator.beginRestorePrepare(), throwsStateError);
+      hold.complete();
+    });
+
+    test('runBackup rejects during restore session', () {
+      coordinator.beginRestorePrepare();
+      expect(() => coordinator.runBackup(() async {}), throwsStateError);
+      coordinator.endRestore();
+    });
+
+    test('runMutation rejects during restore session', () {
+      coordinator.beginRestorePrepare();
+      expect(() => coordinator.runMutation(() async {}), throwsStateError);
+      coordinator.endRestore();
+    });
+
+    test('restore lifecycle: prepare to confirm to commit to end', () async {
       coordinator.beginRestorePrepare();
       expect(coordinator.status, OperationStatus.restorePrepare);
 
@@ -99,18 +136,38 @@ void main() {
       expect(coordinator.isRestoring, isFalse);
     });
 
-    test('restore lifecycle: prepare → cancel → idle', () async {
+    test('restore lifecycle: prepare to cancel to idle', () async {
       coordinator.beginRestorePrepare();
       coordinator.endRestore();
       expect(coordinator.status, OperationStatus.idle);
       expect(coordinator.isRestoring, isFalse);
     });
 
-    test('restore lifecycle: prepare → confirm → cancel → idle', () async {
+    test('restore lifecycle: prepare to confirm to cancel to idle', () async {
       coordinator.beginRestorePrepare();
       coordinator.enterRestoreConfirm();
       coordinator.endRestore();
       expect(coordinator.status, OperationStatus.idle);
+    });
+
+    test('enterRestoreConfirm rejects from wrong state', () {
+      coordinator.beginRestorePrepare();
+      coordinator.endRestore();
+      expect(() => coordinator.enterRestoreConfirm(), throwsStateError);
+    });
+
+    test('enterRestoreConfirm rejects from idle', () {
+      expect(() => coordinator.enterRestoreConfirm(), throwsStateError);
+    });
+
+    test('runRestoreCommit rejects from wrong state', () {
+      coordinator.beginRestorePrepare();
+      expect(() => coordinator.runRestoreCommit(() async {}), throwsStateError);
+      coordinator.endRestore();
+    });
+
+    test('endRestore rejects with no session', () {
+      expect(() => coordinator.endRestore(), throwsStateError);
     });
 
     test('error in runMutation transitions to failed state', () async {
@@ -192,17 +249,24 @@ void main() {
 
   group('OperationCoordinator concurrency correctness', () {
     test(
-      'backup and mutation are serialized (mutation completes before backup)',
+      'backup waits for mutation when both are submitted same-tick',
       () async {
         final coordinator = OperationCoordinator();
         final order = <String>[];
+        final mutationHold = Completer<void>();
 
-        await coordinator.runMutation(() async {
+        final mutation = coordinator.runMutation(() async {
+          await mutationHold.future;
           order.add('mutation');
         });
-        await coordinator.runBackup(() async {
+
+        final backup = coordinator.runBackup(() async {
           order.add('backup');
         });
+
+        mutationHold.complete();
+        await mutation;
+        await backup;
 
         expect(order, ['mutation', 'backup']);
         expect(coordinator.status, OperationStatus.idle);
@@ -210,44 +274,122 @@ void main() {
       },
     );
 
-    test('backup captures consistent snapshot after mutation', () async {
+    test(
+      'backup snapshot is not affected by mutation submitted during backup',
+      () async {
+        final coordinator = OperationCoordinator();
+        var data = <String>['a'];
+        final backupStarted = Completer<void>();
+
+        final backup = coordinator.runBackup(() async {
+          backupStarted.complete();
+          await Future<void>.delayed(const Duration(milliseconds: 1));
+          return List<String>.from(data);
+        });
+
+        await backupStarted.future;
+        final mutation = coordinator.runMutation(() async {
+          data.add('b');
+        });
+
+        final snapshot = await backup;
+        await mutation;
+
+        expect(snapshot, ['a']);
+        expect(data, ['a', 'b']);
+        coordinator.dispose();
+      },
+    );
+
+    test('mutation and restore commit are serialized', () async {
       final coordinator = OperationCoordinator();
-      var data = <String>['a'];
+      final order = <String>[];
+      final mutationHold = Completer<void>();
 
-      await coordinator.runMutation(() async {
-        data.add('b');
-        data.add('c');
+      final mutation = coordinator.runMutation(() async {
+        await mutationHold.future;
+        order.add('mutation');
       });
 
-      final snapshot = await coordinator.runBackup(() async {
-        return List<String>.from(data);
+      coordinator.beginRestorePrepare();
+      coordinator.enterRestoreConfirm();
+      final commit = coordinator.runRestoreCommit(() async {
+        order.add('restore');
       });
 
-      expect(snapshot, containsAllInOrder(<String>['a', 'b', 'c']));
+      mutationHold.complete();
+      await mutation;
+      await commit;
+      coordinator.endRestore();
+
+      expect(order, ['mutation', 'restore']);
       expect(coordinator.status, OperationStatus.idle);
       coordinator.dispose();
     });
 
+    test('failed operation emits failed then idle on recovery', () async {
+      final coordinator = OperationCoordinator();
+      final statuses = <OperationStatus>[];
+      final sub = coordinator.statusStream.listen(statuses.add);
+
+      try {
+        await coordinator.runMutation(() async {
+          throw StateError('boom');
+        });
+      } catch (_) {}
+
+      await coordinator.runMutation(() async {});
+
+      await Future<void>.delayed(Duration.zero);
+      expect(statuses, contains(OperationStatus.failed));
+      expect(statuses.last, OperationStatus.idle);
+      sub.cancel();
+      coordinator.dispose();
+    });
+  });
+
+  group('OperationCoordinator dispose safety', () {
+    test('operations after dispose are rejected', () {
+      final coordinator = OperationCoordinator();
+      coordinator.dispose();
+      expect(() => coordinator.runMutation(() async {}), throwsStateError);
+      expect(() => coordinator.runBackup(() async {}), throwsStateError);
+      expect(() => coordinator.beginRestorePrepare(), throwsStateError);
+      expect(() => coordinator.enterRestoreConfirm(), throwsStateError);
+      expect(() => coordinator.runRestoreCommit(() async {}), throwsStateError);
+    });
+
+    test('action completing after dispose does not throw', () async {
+      final coordinator = OperationCoordinator();
+      final actionHold = Completer<void>();
+
+      final mutation = coordinator.runMutation(() async {
+        await actionHold.future;
+        return 42;
+      });
+
+      await Future<void>.delayed(Duration.zero);
+      coordinator.dispose();
+      actionHold.complete();
+
+      await expectLater(mutation, completes);
+    });
+
     test(
-      'failed operation does not block subsequent operations from status stream',
+      'action queued but not started after dispose completes with error',
       () async {
         final coordinator = OperationCoordinator();
-        final statuses = <OperationStatus>[];
-        final sub = coordinator.statusStream.listen(statuses.add);
+        final actionHold = Completer<void>();
 
-        try {
-          await coordinator.runMutation(() async {
-            throw StateError('boom');
-          });
-        } catch (_) {}
+        final mutation = coordinator.runMutation(() async {
+          await actionHold.future;
+          return 42;
+        });
 
-        await coordinator.runMutation(() async {});
-
-        await Future<void>.delayed(Duration.zero);
-        expect(statuses, contains(OperationStatus.failed));
-        expect(statuses.last, OperationStatus.idle);
-        sub.cancel();
+        actionHold.complete();
         coordinator.dispose();
+
+        await expectLater(mutation, throwsA(isA<StateError>()));
       },
     );
   });
