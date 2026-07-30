@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'models.dart';
+import 'validators.dart';
 
 AppData addNewTrip(AppData data, Trip trip) {
   return data.copyWith(trips: <Trip>[...data.trips, trip]);
@@ -50,11 +51,14 @@ AppData updatePrefectureState(
   String prefecture,
   String state,
 ) {
+  if (!validPrefectures.contains(prefecture)) {
+    return data;
+  }
   return data.copyWith(
-    prefectureStates: <String, String>{
+    prefectureStates: normalizePrefectureStates(<String, String>{
       ...data.prefectureStates,
       prefecture: state,
-    },
+    }),
   );
 }
 
