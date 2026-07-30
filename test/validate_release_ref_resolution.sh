@@ -35,18 +35,18 @@ assert_not_contains() {
 echo "=== Release Ref Resolution Tests ==="
 echo ""
 
-assert_contains "ref: \${{ github.event_name == 'push' && github.sha || 'main' }}" \
-  "tag push checks out github.sha and manual runs check out main"
-assert_not_contains "      - name: Checkout main (trusted)" \
-  "validate checkout is not unconditionally fixed to main"
+assert_contains "ref: main" \
+  "validate always checks out trusted main"
+assert_contains "EVENT_COMMIT_SHA: \${{ github.sha }}" \
+  "tag event SHA is retained for release"
 assert_contains "fetch-depth: 0" \
   "checkout fetches history required for ancestry verification"
 assert_contains "- name: Verify tagged commit belongs to main" \
   "tag ancestry verification step exists"
 assert_contains "if: github.event_name == 'push'" \
   "tag ancestry verification only runs for tag push"
-assert_contains 'git merge-base --is-ancestor "$COMMIT_SHA" "origin/main"' \
-  "tagged commit must be contained in main"
+assert_contains 'git merge-base --is-ancestor "$EVENT_COMMIT_SHA" HEAD' \
+  "tagged commit must be contained in trusted main"
 assert_contains "ref: \${{ needs.validate.outputs.commit_sha }}" \
   "release job checks out the validated commit"
 
