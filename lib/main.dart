@@ -118,6 +118,8 @@ class _HomePageState extends State<HomePage> {
   bool _isLoading = true;
   String? _loadError;
   int _tab = 0;
+  int? _importCompleted;
+  int? _importTotal;
   bool _isCleanupRunning = false;
   StreamSubscription<OperationStatus>? _statusSub;
 
