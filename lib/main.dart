@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import 'app_data_operations.dart';
 import 'backup_service.dart';
 import 'models.dart';
+import 'storage_cleanup.dart';
 import 'trip_store.dart';
 import 'validators.dart';
 
@@ -93,6 +94,7 @@ class _HomePageState extends State<HomePage> {
   bool _isLoading = true;
   String? _loadError;
   int _tab = 0;
+  bool _isCleanupRunning = false;
 
   @override
   void initState() {
