@@ -92,6 +92,207 @@ void main() {
     );
   });
 
+  test('上限超過のmanifest.jsonをreadBytes()前に拒否する', () async {
+    final validBackup = await service.createBackup(AppData(
+      trips: <Trip>[],
+      unassignedPhotos: const <File>[],
+      prefectureStates: const <String, String>{},
+    ));
+    final decoded = ZipDecoder().decodeBytes(await validBackup.readAsBytes());
+    decoded.files
+        .firstWhere((f) => f.name == 'manifest.json')
+        .size = BackupService.maxManifestBytes + 1;
+    final encoded = ZipEncoder().encode(decoded);
+
+    await expectLater(
+      service.prepareRestoreBytes(encoded),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('上限超過のtrips.jsonをreadBytes()前に拒否する', () async {
+    final validBackup = await service.createBackup(AppData(
+      trips: <Trip>[],
+      unassignedPhotos: const <File>[],
+      prefectureStates: const <String, String>{},
+    ));
+    final decoded = ZipDecoder().decodeBytes(await validBackup.readAsBytes());
+    decoded.files
+        .firstWhere((f) => f.name == 'trips.json')
+        .size = BackupService.maxTripsBytes + 1;
+    final encoded = ZipEncoder().encode(decoded);
+
+    await expectLater(
+      service.prepareRestoreBytes(encoded),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('高圧縮率の巨大JSONを模したZIPを拒否する', () async {
+    final archive = Archive();
+    final hugeDeclaredSize = BackupService.maxTripsBytes + 100;
+    final tripsContent = utf8.encode(
+      jsonEncode(<String, Object>{
+        'trips': <Object>[],
+        'unassignedPhotos': <String>[],
+        'prefectureStates': const <String, String>{},
+      }),
+    );
+    final manifestContent = utf8.encode(jsonEncode(<String, Object>{
+      'appId': BackupService.appId,
+      'backupFormatVersion': BackupService.currentFormatVersion,
+      'tripCount': 0,
+      'photoCount': 0,
+      'totalUncompressedBytes': 0,
+      'checksumsAlgorithm': 'sha-256',
+      'checksums': const <String, String>{},
+    }));
+    archive
+      ..addFile(
+        ArchiveFile('trips.json', hugeDeclaredSize, tripsContent),
+      )
+      ..addFile(
+        ArchiveFile('manifest.json', manifestContent.length, manifestContent),
+      );
+    final encoded = ZipEncoder().encode(archive);
+
+    await expectLater(
+      service.prepareRestoreBytes(encoded),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('ディレクトリエントリを拒否する', () async {
+    final validBackup = await service.createBackup(AppData(
+      trips: <Trip>[],
+      unassignedPhotos: const <File>[],
+      prefectureStates: const <String, String>{},
+    ));
+    final decoded = ZipDecoder().decodeBytes(await validBackup.readAsBytes());
+    final dirEntry = ArchiveFile('photos/', 0, [])..isFile = false;
+    decoded.addFile(dirEntry);
+    final encoded = ZipEncoder().encode(decoded);
+
+    await expectLater(
+      service.prepareRestoreBytes(encoded),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('過大な旅行名を拒否する', () async {
+    final archive = Archive();
+    final longTitle = 'あ' * 250;
+    final manifest = utf8.encode(jsonEncode(<String, Object>{
+      'appId': BackupService.appId,
+      'backupFormatVersion': 1,
+      'tripCount': 1,
+      'photoCount': 0,
+      'totalUncompressedBytes': 0,
+      'checksumsAlgorithm': 'sha-256',
+      'checksums': const <String, String>{},
+    }));
+    final records = utf8.encode(
+      jsonEncode(<Object>[
+        <String, Object>{'title': longTitle, 'photos': <String>[]},
+      ]),
+    );
+    archive
+      ..addFile(ArchiveFile('manifest.json', manifest.length, manifest))
+      ..addFile(ArchiveFile('trips.json', records.length, records));
+
+    final bytes = ZipEncoder().encode(archive);
+
+    await expectLater(
+      service.prepareRestoreBytes(bytes),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('過大なリストまたはMapを拒否する', () async {
+    final archive = Archive();
+    final manyPhotos = List<String>.generate(
+      600,
+      (i) => 'photos/trip-0-${i.toString().padLeft(3, '0')}.jpg',
+    );
+    final manifest = utf8.encode(jsonEncode(<String, Object>{
+      'appId': BackupService.appId,
+      'backupFormatVersion': BackupService.currentFormatVersion,
+      'tripCount': 1,
+      'photoCount': manyPhotos.length,
+      'totalUncompressedBytes': 0,
+      'checksumsAlgorithm': 'sha-256',
+      'checksums': <String, String>{},
+    }));
+    final records = utf8.encode(jsonEncode(<String, Object>{
+      'trips': <Object>[
+        <String, Object>{'id': 'trip-1', 'title': '旅行', 'photos': manyPhotos},
+      ],
+      'unassignedPhotos': <String>[],
+      'prefectureStates': const <String, String>{},
+    }));
+    archive
+      ..addFile(ArchiveFile('manifest.json', manifest.length, manifest))
+      ..addFile(ArchiveFile('trips.json', records.length, records));
+
+    final bytes = ZipEncoder().encode(archive);
+
+    await expectLater(
+      service.prepareRestoreBytes(bytes),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('正常なv1バックアップを復元できる', () async {
+    final archive = Archive();
+    final photoContent = <int>[1, 2, 3, 4];
+    final manifest = utf8.encode(jsonEncode(<String, Object>{
+      'appId': BackupService.appId,
+      'backupFormatVersion': 1,
+      'tripCount': 1,
+      'photoCount': 1,
+      'totalUncompressedBytes': photoContent.length,
+    }));
+    final records = utf8.encode(
+      jsonEncode(<Object>[
+        <String, Object>{
+          'title': 'v1旅行',
+          'photos': <String>['photos/trip-0-000.jpg'],
+        },
+      ]),
+    );
+    archive
+      ..addFile(ArchiveFile('manifest.json', manifest.length, manifest))
+      ..addFile(ArchiveFile('trips.json', records.length, records))
+      ..addFile(
+        ArchiveFile('photos/trip-0-000.jpg', photoContent.length, photoContent),
+      );
+
+    final bytes = ZipEncoder().encode(archive);
+
+    final prepared = await service.prepareRestoreBytes(bytes);
+    expect(prepared.tripCount, 1);
+    expect(prepared.photoCount, 1);
+  });
+
+  test('正常なv2バックアップを復元できる', () async {
+    final photo = File('${temporaryDirectory.path}/v2_photo.jpg');
+    await photo.writeAsBytes(<int>[5, 6, 7, 8]);
+    final original = AppData(
+      trips: <Trip>[
+        Trip(id: 'trip-v2', title: 'v2旅行', photos: <File>[photo]),
+      ],
+      unassignedPhotos: const <File>[],
+      prefectureStates: const <String, String>{'東京': 'visited'},
+    );
+
+    final backup = await service.createBackup(original);
+    final prepared = await service.prepareRestoreFile(backup);
+
+    expect(prepared.tripCount, 1);
+    expect(prepared.photoCount, 1);
+    expect(prepared.prefectureStates['東京'], 'visited');
+  });
+
   test('別アプリのバックアップを拒否する', () async {
     final archive = Archive();
     final manifest = utf8.encode(jsonEncode(<String, Object>{
