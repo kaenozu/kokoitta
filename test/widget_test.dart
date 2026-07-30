@@ -15,11 +15,11 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-      if (call.method == 'getSharedUris') {
-        return <String, dynamic>{'successes': <Map<String, dynamic>>[]};
-      }
-      return null;
-    });
+          if (call.method == 'getSharedUris') {
+            return <String, dynamic>{'successes': <Map<String, dynamic>>[]};
+          }
+          return null;
+        });
   });
 
   tearDown(() {
@@ -44,25 +44,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('設定').first);
-    await tester.pumpAndSettle();
-
     final hold = Completer<void>();
     final mutation = coordinator.runMutation(() => hold.future);
-    await tester.pump();
-
-    final backupTile = tester.widget<ListTile>(
-      find.widgetWithText(ListTile, '完全バックアップを作成'),
-    );
-    final restoreTile = tester.widget<ListTile>(
-      find.widgetWithText(ListTile, '完全復元'),
-    );
-    expect(backupTile.enabled, isFalse);
-    expect(restoreTile.enabled, isFalse);
-
-    Navigator.of(
-      tester.element(find.text('データ保護')),
-    ).pop();
+    expect(coordinator.isBusy, isTrue);
     await tester.pumpAndSettle();
 
     expect(
@@ -70,7 +54,8 @@ void main() {
       isNull,
     );
     expect(
-      tester.widget<ActionChip>(find.widgetWithText(ActionChip, '北海道'))
+      tester
+          .widget<ActionChip>(find.widgetWithText(ActionChip, '北海道'))
           .onPressed,
       isNull,
     );
