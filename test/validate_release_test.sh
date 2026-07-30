@@ -146,6 +146,59 @@ assert_exit_code 1 "$(echo "$result" | grep '^EXIT:' | sed 's/EXIT://' || echo '
 result="$(run_script_capture --unknown 2>&1)" || true
 assert_exit_code 1 "$(echo "$result" | grep '^EXIT:' | sed 's/EXIT://' || echo '1')" "unknown option should fail"
 
+# --- Shell injection edge cases ---
+
+echo "[Shell injection edge cases]"
+
+# Tag with embedded double quotes
+result="$(run_script_capture --tag '"v1.2.3"' 2>&1)" || true
+assert_exit_code 1 "$(echo "$result" | grep '^EXIT:' | sed 's/EXIT://' || echo '1')" "--tag '\"v1.2.3\"' should fail (embedded quotes)"
+
+# Tag with literal $() command substitution
+result="$(run_script_capture --tag '$(id)' 2>&1)" || true
+assert_exit_code 1 "$(echo "$result" | grep '^EXIT:' | sed 's/EXIT://' || echo '1')" "--tag '\$(id)' should fail (command substitution literal)"
+
+# Tag with literal backticks
+result="$(run_script_capture --tag '`id`' 2>&1)" || true
+assert_exit_code 1 "$(echo "$result" | grep '^EXIT:' | sed 's/EXIT://' || echo '1')" "--tag '\`id\`' should fail (backtick literal)"
+
+# Tag with newline character
+result="$(run_script_capture --tag $'v1.2\n3' 2>&1)" || true
+assert_exit_code 1 "$(echo "$result" | grep '^EXIT:' | sed 's/EXIT://' || echo '1')" "--tag with newline should fail"
+
+# Tag with semicolons
+result="$(run_script_capture --tag 'v1.2.3;echo pwned' 2>&1)" || true
+assert_exit_code 1 "$(echo "$result" | grep '^EXIT:' | sed 's/EXIT://' || echo '1')" "--tag 'v1.2.3;echo pwned' should fail (semicolons)"
+
+# Tag with pipe
+result="$(run_script_capture --tag 'v1.2.3|cat /etc/passwd' 2>&1)" || true
+assert_exit_code 1 "$(echo "$result" | grep '^EXIT:' | sed 's/EXIT://' || echo '1')" "--tag 'v1.2.3|cat /etc/passwd' should fail (pipe)"
+
+# Tag with environment variable reference
+result="$(run_script_capture --tag '$HOME' 2>&1)" || true
+assert_exit_code 1 "$(echo "$result" | grep '^EXIT:' | sed 's/EXIT://' || echo '1')" "--tag '\$HOME' should fail (env var reference)"
+
+# Version with embedded command substitution
+result="$(run_script_capture --version '$(id)' --version-code 42 2>&1)" || true
+assert_exit_code 1 "$(echo "$result" | grep '^EXIT:' | sed 's/EXIT://' || echo '1')" "--version '\$(id)' should fail (command substitution literal)"
+
+# Side-effect check: run with malicious input and verify no files created
+side_effect_dir="$(mktemp -d)"
+touch "$side_effect_dir/.keep"
+initial_files="$(find "$side_effect_dir" -type f | sort)"
+bash "$SCRIPT" --tag '$(id)' >/dev/null 2>&1 || true
+bash "$SCRIPT" --tag '`id`' >/dev/null 2>&1 || true
+bash "$SCRIPT" --tag $'evil\nv1.2.3' >/dev/null 2>&1 || true
+after_files="$(find "$side_effect_dir" -type f | sort)"
+if [[ "$initial_files" == "$after_files" ]]; then
+  echo "  ✅ PASS: side-effect check (no extra files created by malicious input)"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ FAIL: side-effect check (unexpected files in $side_effect_dir)"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$side_effect_dir"
+
 echo ""
 
 # --- Summary ---

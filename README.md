@@ -83,3 +83,9 @@ git push origin v1.2.0
 - 再実行（Re-run）は同じ versionCode を生成するため、既存の Release を上書きしません
 - 手動実行時に指定した `ref` の commit SHA に解決され、ログと成果物ファイル名に含まれます
 - エラー時は validate ジョブのログを確認してください。署名シークレット関連のエラーは fail-fast で停止します
+
+### 同一バージョンの競合防止
+
+- **Concurrency**: 同一バージョンのワークフローが同時に実行されるのを防止します。`push tag` と `workflow_dispatch` の両方を同じ concurrency group で直列化します
+- 先に実行中のリリースがある場合、後続の実行はキューイングされ、完了後に開始されます
+- `cancel-in-progress: false` のため、進行中のリリースが中断されることはありません
