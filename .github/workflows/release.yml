@@ -102,7 +102,11 @@ jobs:
 
   release:
     needs: [validate]
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
+    environment: android-release
     permissions:
       contents: write
     steps:
@@ -178,8 +182,15 @@ jobs:
           cp build/app/outputs/bundle/release/app-release.aab \
             "kokoitta_app-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.short_sha }}.aab"
 
+      - name: Cleanup signing secrets
+        if: always()
+        continue-on-error: true
+        run: |
+          rm -f android/app/release-keystore.jks
+          rm -f android/key.properties
+
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
         with:
           tag_name: ${{ needs.validate.outputs.release_tag }}
           name: ${{ needs.validate.outputs.version }}
@@ -188,9 +199,3 @@ jobs:
           files: |
             kokoitta_app-*.apk
             kokoitta_app-*.aab
-
-      - name: Cleanup signing secrets
-        if: always()
-        run: |
-          rm -f android/app/release-keystore.jks
-          rm -f android/key.properties

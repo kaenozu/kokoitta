@@ -40,12 +40,14 @@ flutter build apk --debug
 
 署名済み APK/AAB のビルドには以下の Secrets が必要です。
 
-- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_BASE64` (keystore を Base64 エンコードした値)
 - `ANDROID_STORE_PASSWORD`
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
 Secrets が不足している場合、ワークフローはビルド前に失敗します。
+
+これらの Secrets は **repository secrets ではなく、`android-release` Environment の Environment secrets として登録してください**。詳細は「セキュリティ」セクションを参照してください。
 
 ### バージョニング
 
@@ -77,10 +79,65 @@ git push origin v1.2.0
 
 ### セキュリティ
 
+#### 信頼境界（コードで保証）
+
 - 手動リリース（`workflow_dispatch`）は常に `main` ブランチの先端をビルド対象とします。任意の ref を指定することはできません
-- 署名 Secrets は `validate` ジョブには渡されません。 `release` ジョブでのみ使用され、ビルド後に削除されます
+- `release` ジョブは `if:` 条件により、`workflow_dispatch` では `refs/heads/main`、`push`（タグ）では `refs/tags/v*` の場合のみ実行されます
+- 署名 Secrets は `validate` ジョブには渡されません。`release` ジョブでのみ使用され、第三者Action実行前に削除されます
 - `validate` ジョブは `contents: read` 権限のみで実行され、Release 作成は `release` ジョブ（`contents: write`）に分離されています
+- ビルドと署名の後、第三者Action（`softprops/action-gh-release`）の実行**前**に署名ファイル（keystore, key.properties）を削除します。`if: always()` により失敗経路でも削除が実行され、`continue-on-error: true` により cleanup の失敗が公開を妨げません
+- `softprops/action-gh-release` は可変タグ `@v2` ではなく、完全 commit SHA に固定しています（現在のバージョン: v2.6.2）
 - 同一バージョンの重複リリースを防ぐため、`concurrency` により直列化されます
+- イベント入力（version, tag名）は `env:` 経由で受け渡し、shell 内で直接展開しません。`scripts/validate-release.sh` の semver 検証により shell injection を防止します
+
+#### GitHub 設定（手動設定が必要）
+
+以下の設定は GitHub リポジトリ設定画面で手動で行う必要があります。未設定の場合、**コード上の保護のみでは不十分**であり、特にタグ push 経路では未信頼 workflow 定義による攻撃を完全には防げません。
+
+##### Environment 設定
+
+1. **Environment の作成**
+   - リポジトリ → Settings → Environments → `android-release` を作成
+2. **Environment secrets の登録**
+   - 署名 Secrets（`ANDROID_KEYSTORE_BASE64`, `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`）を repository secrets ではなく、`android-release` Environment の Environment secrets として登録
+   - これにより、`release` ジョブが `environment: android-release` を宣言した場合のみ Secrets が注入される
+   - repository secrets に登録した場合、任意の workflow からアクセス可能になるため推奨しません
+3. **Deployment branches and tags**
+   - `Deployment branches` タブで `main` を追加（`Selected branches` モード）
+   - `Deployment tags` タブで `v*.*.*` を追加（`Selected tags` モード）
+   - これにより、未信頼ブランチや未信頼タグからの workflow 実行時に Environment secrets へのアクセスを遮断します
+4. **Required reviewers**（GitHub Enterprise/Team プラン）
+   - `Required reviewers` を 1 名以上追加
+   - デプロイ承認プロセスが追加され、`release` ジョブは承認されるまで一時停止します
+   - 利用可能なプランでない場合、この設定はスキップされます。その場合、タグ push 経路の保護は環境変数と tag ruleset に依存します
+
+##### Ruleset 設定（タグ保護）
+
+タグ push 経路では、workflow 定義ファイル自体がタグが指す commit から実行されるため、コード上で完全に保護することはできません。以下の GitHub Ruleset 設定を推奨します。
+
+1. **Tag ruleset の作成**
+   - リポジトリ → Settings → Rules → Rulesets → `New ruleset` → `Tag`
+   - 対象タグパターン: `v*.*.*`
+   - `Restrict creations` を有効化
+   - 許可するユーザー/チームを限定
+   - 少なくとも管理者のみがリリースタグを作成できるようにする
+2. **Branch ruleset の作成（推奨）**
+   - `main` ブランチに対する `Require a pull request before merging` の有効化
+   - `Require approvals` の設定
+
+##### Repository secrets の注意
+
+現状の workflow は `release` ジョブが `environment: android-release` を宣言しているため、Environment secrets から Secret を解決します。しかし、**repository secrets にも同じ Secret が存在する場合**、任意の workflow からアクセス可能です。必ず repository secrets からは削除し、Environment secrets のみに設定してください。
+
+#### タグ push のリスクモデル
+
+GitHub Actions の仕様上、タグ push で起動した workflow は、そのタグが指す commit 上の workflow 定義を実行します。つまり、攻撃者が任意の workflow 定義を含むタグを作成できる場合：
+
+1. 悪意のある workflow が `on: push: tags: ['v*.*.*']` を宣言して起動する
+2. その workflow が `release` ジョブを宣言し、`environment: android-release` なしで直接 Secrets を参照しようとしても、Environment の branch/tag rules によりアクセスは拒否される
+3. ただし、悪意のある workflow が `GITHUB_TOKEN` の `contents: write` 権限を利用して不正な Release を作成する可能性は残る
+
+このリスクを軽減するには、前述の Ruleset 設定でタグ作成を制限する必要があります。
 
 ### 注意事項
 
@@ -88,8 +145,10 @@ git push origin v1.2.0
 - 同名の Git タグが既に存在し、異なる commit を指している場合も失敗します
 - 再実行（Re-run）は同じ versionCode を生成するため、既存の Release を上書きしません
 - 手動リリースでは `main` の先端がビルド対象となり、ログと成果物ファイル名に commit SHA が含まれます
-- 署名キーストアと key.properties はビルド後に自動削除されます
+- 署名キーストアと key.properties は第三者Action（Release公開）の**前に自動削除**されます
+- cleanup は失敗経路でも実行されます（`if: always()`）
 - エラー時は validate ジョブのログを確認してください。署名シークレット関連のエラーは fail-fast で停止します
+- Environment 設定が未完了の場合、タグ push 経路での署名 Secrets 保護は不完全です。リリース前に「セキュリティ」セクションの手動設定を完了してください
 
 ### 同一バージョンの競合防止
 
