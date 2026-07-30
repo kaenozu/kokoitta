@@ -41,5 +41,20 @@ jobs:
       - name: Test
         run: flutter test
 
+      - name: Validate release shell syntax
+        run: |
+          bash -n scripts/validate-release.sh
+          bash -n test/validate_release_test.sh
+          bash -n test/validate_workflow_security.sh
+          bash -n test/validate_release_ref_resolution.sh
+
+      - name: Test release validation
+        run: bash test/validate_release_test.sh
+
+      - name: Validate workflow security structure
+        run: |
+          bash test/validate_workflow_security.sh
+          bash test/validate_release_ref_resolution.sh
+
       - name: Build debug APK
         run: flutter build apk --debug
