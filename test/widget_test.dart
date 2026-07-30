@@ -54,12 +54,11 @@ void main() {
       matching: find.byType(IconButton),
     );
     expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNull);
-    expect(
-      tester
-          .widget<ActionChip>(find.widgetWithText(ActionChip, '北海道'))
-          .onPressed,
-      isNull,
+    final prefectureChip = find.ancestor(
+      of: find.text('北海道'),
+      matching: find.byType(ActionChip),
     );
+    expect(tester.widget<ActionChip>(prefectureChip).onPressed, isNull);
 
     hold.complete();
     await mutation;
