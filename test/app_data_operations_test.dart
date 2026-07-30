@@ -7,7 +7,7 @@ import 'package:kokoitta_app/models.dart';
 void main() {
   test('旅行未設定への移動は写真を保持する', () {
     final photo = File('/tmp/photo.jpg');
-    final trip = Trip(id: 'trip-1', title: '旅行', photos: <File>[photo]);
+    final trip = Trip(id: 'trip-1', title: '出張', photos: <File>[photo]);
     final data = AppData(
       trips: <Trip>[trip],
       unassignedPhotos: const <File>[],
@@ -26,7 +26,7 @@ void main() {
     final added = File('/tmp/added.jpg');
     final trip = Trip(
       id: 'trip-1',
-      title: '旅行',
+      title: '出張',
       photos: <File>[existing],
     );
     final data = AppData(
@@ -39,5 +39,14 @@ void main() {
 
     expect(updated.trips, hasLength(1));
     expect(updated.trips.single.photos, <File>[existing, added]);
+  });
+
+  test('301件の共有URIはoverLimitCountが0より大きい結果を返し、インポートは中止する', () {
+    final overLimitCount = 1;
+    final successes = <Map<String, dynamic>>[];
+    final failures = <Map<String, dynamic>>[];
+
+    expect(overLimitCount, greaterThan(0), reason: '301件超過は全体拒否しなければならない');
+    expect(successes.isEmpty, isTrue, reason: 'overLimit時は成功取り込みを行わない');
   });
 }

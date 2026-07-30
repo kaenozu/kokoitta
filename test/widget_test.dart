@@ -10,7 +10,12 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (call) async => <String>[]);
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getSharedUris') {
+        return <String, dynamic>{'successes': <Map<String, dynamic>>[]};
+      }
+      return null;
+    });
   });
 
   tearDown(() {
