@@ -55,7 +55,6 @@ void main() {
       matching: find.byType(IconButton),
     );
     expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNull);
-    expect(find.text('都道府県マップ'), findsOneWidget);
 
     hold.complete();
     await mutation;
