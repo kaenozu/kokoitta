@@ -94,6 +94,7 @@ class _HomePageState extends State<HomePage> {
   bool _isLoading = true;
   String? _loadError;
   int _tab = 0;
+  bool _isCleanupRunning = false;
 
   @override
   void initState() {

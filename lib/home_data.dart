@@ -9,8 +9,6 @@ extension _HomeDataActions on _HomePageState {
     }
   }
 
-  bool _isCleanupRunning = false;
-
   void _scheduleStartupCleanup() {
     if (_isCleanupRunning) return;
     _isCleanupRunning = true;
