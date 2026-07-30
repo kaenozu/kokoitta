@@ -49,8 +49,11 @@ Secrets が不足している場合、ワークフローはビルド前に失敗
 
 ### バージョニング
 
-- **versionName**: タグ `v1.2.3` → `1.2.3`。手動実行の場合は入力 `version` をそのまま使用
-- **versionCode**: リリースワークフロー内で単調増加する `run_number` を使用。同じ run の再実行は同じ versionCode を生成する（上書き防止）
+- **versionName**: タグ `vX.Y.Z` から `X.Y.Z` を抽出して使用。手動実行の場合は入力 `version` をそのまま使用
+- **versionCode**: `github.run_number` を使用。再実行時に同じ versionCode になる（上書き防止）
+- **Commit SHA**: 手動実行時に指定した `ref` はチェックアウト後に SHA に解決され、Release タグとビルド対象の commit が一致するように保証される
+- **タグと commit の一致**: 同名の Git タグが既に存在し、異なる commit を指している場合は失敗する。同名 Release が既に存在する場合も失敗する
+- **出力**: APK と AAB の両方を生成し、GitHub Release に添付する
 - 不正なタグ形式（`v1.2`、`1.2.3`、`v1.2.3-beta` など）は検証ステップでビルド前に失敗します
 
 ### リリース手順（タグ push）
@@ -67,13 +70,16 @@ git push origin v1.2.0
 
 1. GitHub リポジトリ → Actions → Android Release → Run workflow
 2. 入力:
-   - **version**: `1.2.0`（`v` なしの semver）
-   - **ref**: `main`（ブランチ名、タグ名、または commit SHA）
-3. ワークフローが指定 ref をチェックアウトし、ビルド・署名・Release 作成を実行
+    - **version**: `1.2.0`（`v` なしの semver）
+    - **ref**: `main`（ブランチ名、タグ名、または commit SHA）
+3. ワークフローが指定 ref をチェックアウトし、SHA に解決した後、ビルド・署名・Release 作成を実行
+4. Release タグはビルドした commit SHA へ作成される
+5. 同名タグが別の SHA を指している場合、または同名 Release が既に存在する場合は失敗する
 
 ### 注意事項
 
 - 同一バージョンの Release が既に存在する場合、ワークフローは早期に失敗します
+- 同名の Git タグが既に存在し、異なる commit を指している場合も失敗します
 - 再実行（Re-run）は同じ versionCode を生成するため、既存の Release を上書きしません
-- 手動実行時に指定した `ref` の commit SHA はログと成果物ファイル名に含まれ、追跡可能です
+- 手動実行時に指定した `ref` の commit SHA に解決され、ログと成果物ファイル名に含まれます
 - エラー時は validate ジョブのログを確認してください。署名シークレット関連のエラーは fail-fast で停止します

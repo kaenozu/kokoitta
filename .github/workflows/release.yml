@@ -37,36 +37,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || '' }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}
 
       - name: Validate and resolve version
         id: resolve
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_REF: ${{ github.event.inputs.ref }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
-            if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-              echo "::error::Invalid version '$VERSION' (expected X.Y.Z, e.g. 1.2.3)"
-              exit 1
-            fi
-            RELEASE_TAG="v$VERSION"
-          else
-            RELEASE_TAG="${{ github.ref_name }}"
-            if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-              echo "::error::Invalid tag '$RELEASE_TAG' (expected vX.Y.Z, e.g. v1.2.3)"
-              exit 1
-            fi
-            VERSION="${RELEASE_TAG#v}"
-          fi
-
           COMMIT_SHA="$(git rev-parse HEAD)"
           SHORT_SHA="${COMMIT_SHA:0:7}"
           VERSION_CODE="${{ github.run_number }}"
 
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            scripts/validate-release.sh \
+              --version "$INPUT_VERSION" \
+              --version-code "$VERSION_CODE" \
+              >> "$GITHUB_OUTPUT"
+          else
+            RELEASE_TAG="${{ github.ref_name }}"
+            scripts/validate-release.sh \
+              --tag "$RELEASE_TAG" \
+              >> "$GITHUB_OUTPUT"
+          fi
+
           echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
 
       - name: Check for existing release
         env:
@@ -75,8 +72,21 @@ jobs:
           TAG="${{ steps.resolve.outputs.release_tag }}"
           if gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
             echo "::error::Release with tag '$TAG' already exists. Use a different version."
-            echo "::error::If re-running a failed workflow, delete the existing release first."
             exit 1
+          fi
+
+      - name: Check for existing tag
+        run: |
+          TAG="${{ steps.resolve.outputs.release_tag }}"
+          COMMIT_SHA="${{ steps.resolve.outputs.commit_sha }}"
+          git fetch --force --tags
+          if git rev-parse "refs/tags/$TAG^{}" &>/dev/null; then
+            TAG_SHA="$(git rev-parse "refs/tags/$TAG^{}")"
+            if [[ "$TAG_SHA" != "$COMMIT_SHA" ]]; then
+              echo "::error::Tag '$TAG' already exists but points to a different commit ($TAG_SHA vs $COMMIT_SHA)"
+              exit 1
+            fi
+            echo "Tag '$TAG' already exists and points to the same commit ($COMMIT_SHA). Proceeding."
           fi
 
       - name: Log resolved release info
@@ -173,6 +183,7 @@ jobs:
           tag_name: ${{ needs.validate.outputs.release_tag }}
           name: ${{ needs.validate.outputs.version }}
           generate_release_notes: true
+          target_commitish: ${{ needs.validate.outputs.commit_sha }}
           files: |
             kokoitta_app-*.apk
             kokoitta_app-*.aab
