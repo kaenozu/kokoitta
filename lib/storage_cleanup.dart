@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'models.dart';
@@ -12,37 +11,22 @@ class StorageCleanup {
   static const int _maxSafetySnapshots = 3;
   static const int _stagingMaxAgeHours = 24;
 
-  static const String _restoreDirPrefix = 'restore-';
-
   static Future<void> run({
     AppData? appData,
     Directory? documentsDirectory,
-    Future<void> Function(File file)? onDeleteFile,
-    Future<void> Function(Directory dir)? onDeleteDirectory,
   }) async {
     try {
-      final directory =
-          documentsDirectory ?? await getApplicationDocumentsDirectory();
-      await _cleanupManualBackups(directory, onDeleteFile: onDeleteFile);
-      await _cleanupSafetySnapshots(directory, onDeleteFile: onDeleteFile);
-      await _cleanupStagingDirectories(
-        directory,
-        onDeleteDirectory: onDeleteDirectory,
-      );
+      final directory = documentsDirectory ?? await getApplicationDocumentsDirectory();
+      await _cleanupManualBackups(directory);
+      await _cleanupSafetySnapshots(directory);
+      await _cleanupStagingDirectories(directory);
       if (appData != null) {
-        await _cleanupRestorePhotoSets(
-          directory,
-          appData,
-          onDeleteDirectory: onDeleteDirectory,
-        );
-        await _cleanupOrphanPhotos(
-          directory,
-          appData,
-          onDeleteFile: onDeleteFile,
-        );
+        await _cleanupRestorePhotoSets(directory, appData);
+        await _cleanupOrphanPhotos(directory, appData);
+        await _cleanupOrphanPhotosInPhotosDir(directory, appData);
       }
-    } catch (e) {
-      debugPrint('Storage cleanup failed: $e');
+    } catch (_) {
+      // Cleanup failures must not block application startup.
     }
   }
 
@@ -50,60 +34,46 @@ class StorageCleanup {
     return path.replaceAll('\\', '/');
   }
 
-  static Future<void> _cleanupManualBackups(
-    Directory directory, {
-    Future<void> Function(File file)? onDeleteFile,
-  }) async {
+  static const _backupFileNamePattern = RegExp(r'^kokoitta-backup-\d+\.zip$');
+
+  static Future<void> _cleanupManualBackups(Directory directory) async {
     final backupsDir = Directory('${directory.path}/backups');
     if (!await backupsDir.exists()) return;
 
-    final files = _listFilesSync(backupsDir);
-    files.sort(
-      (a, b) =>
-          _extractTimestamp(b.path).compareTo(_extractTimestamp(a.path)),
-    );
+    final files = backupsDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => _backupFileNamePattern.hasMatch(f.path))
+        .toList();
+    files.sort((a, b) => _extractTimestamp(b.path).compareTo(_extractTimestamp(a.path)));
 
     final toDelete = files.skip(_maxManualBackups);
     for (final file in toDelete) {
       try {
-        if (onDeleteFile != null) {
-          await onDeleteFile(file);
-        } else {
-          await file.delete();
-        }
-      } catch (e) {
-        debugPrint(
-          'Storage cleanup: failed to delete backup ${file.path.split(RegExp(r'[/\\]')).last}: $e',
-        );
+        await file.delete();
+      } catch (_) {
+        // Individual deletion failure must not prevent cleaning other files.
       }
     }
   }
 
-  static Future<void> _cleanupSafetySnapshots(
-    Directory directory, {
-    Future<void> Function(File file)? onDeleteFile,
-  }) async {
+  static Future<void> _cleanupSafetySnapshots(Directory directory) async {
     final snapshotsDir = Directory('${directory.path}/safety-backups');
     if (!await snapshotsDir.exists()) return;
 
-    final files = _listFilesSync(snapshotsDir);
-    files.sort(
-      (a, b) =>
-          _extractTimestamp(b.path).compareTo(_extractTimestamp(a.path)),
-    );
+    final files = snapshotsDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => _backupFileNamePattern.hasMatch(f.path))
+        .toList();
+    files.sort((a, b) => _extractTimestamp(b.path).compareTo(_extractTimestamp(a.path)));
 
     final toDelete = files.skip(_maxSafetySnapshots);
     for (final file in toDelete) {
       try {
-        if (onDeleteFile != null) {
-          await onDeleteFile(file);
-        } else {
-          await file.delete();
-        }
-      } catch (e) {
-        debugPrint(
-          'Storage cleanup: failed to delete snapshot ${file.path.split(RegExp(r'[/\\]')).last}: $e',
-        );
+        await file.delete();
+      } catch (_) {
+        // Individual deletion failure must not prevent cleaning other files.
       }
     }
   }
@@ -117,10 +87,7 @@ class StorageCleanup {
     return 0;
   }
 
-  static Future<void> _cleanupStagingDirectories(
-    Directory directory, {
-    Future<void> Function(Directory dir)? onDeleteDirectory,
-  }) async {
+  static Future<void> _cleanupStagingDirectories(Directory directory) async {
     final now = DateTime.now();
     final maxAge = Duration(hours: _stagingMaxAgeHours);
 
@@ -128,7 +95,7 @@ class StorageCleanup {
       final stagingDir = Directory('${directory.path}/$stagingName');
       if (!await stagingDir.exists()) continue;
 
-      final entries = _listDirectoriesSync(stagingDir);
+      final entries = stagingDir.listSync().whereType<Directory>().toList();
       for (final subDir in entries) {
         final dirName = subDir.path.split(RegExp(r'[/\\]')).last;
         final timestampMillis = int.tryParse(dirName);
@@ -137,15 +104,9 @@ class StorageCleanup {
         final dirTime = DateTime.fromMillisecondsSinceEpoch(timestampMillis);
         if (now.difference(dirTime) > maxAge) {
           try {
-            if (onDeleteDirectory != null) {
-              await onDeleteDirectory(subDir);
-            } else {
-              await subDir.delete(recursive: true);
-            }
-          } catch (e) {
-            debugPrint(
-              'Storage cleanup: failed to delete staging dir $dirName: $e',
-            );
+            await subDir.delete(recursive: true);
+          } catch (_) {
+            // Individual deletion failure must not prevent cleaning other directories.
           }
         }
       }
@@ -154,9 +115,8 @@ class StorageCleanup {
 
   static Future<void> _cleanupRestorePhotoSets(
     Directory directory,
-    AppData appData, {
-    Future<void> Function(Directory dir)? onDeleteDirectory,
-  }) async {
+    AppData appData,
+  ) async {
     final photoSetsDir = Directory('${directory.path}/photo-sets');
     if (!await photoSetsDir.exists()) return;
 
@@ -165,11 +125,10 @@ class StorageCleanup {
       final normalized = _normalizePath(file.path);
       final photoSetsIndex = normalized.indexOf('/photo-sets/');
       if (photoSetsIndex < 0) continue;
-      final afterPhotoSets =
-          normalized.substring(photoSetsIndex + '/photo-sets/'.length);
+      final afterPhotoSets = normalized.substring(photoSetsIndex + '/photo-sets/'.length);
       final parts = afterPhotoSets.split('/');
       if (parts.isEmpty) continue;
-      if (!parts.first.startsWith(_restoreDirPrefix)) continue;
+      if (!parts.first.startsWith('restore-')) continue;
       final prefix = normalized.substring(
         0,
         photoSetsIndex + '/photo-sets/'.length + parts.first.length,
@@ -177,28 +136,19 @@ class StorageCleanup {
       referencedPrefixes.add(prefix);
     }
 
-    final entries = _listDirectoriesSync(photoSetsDir);
+    final entries = photoSetsDir.listSync().whereType<Directory>().toList();
     for (final subDir in entries) {
-      final subDirName = subDir.path.split(RegExp(r'[/\\]')).last;
-      if (!subDirName.startsWith(_restoreDirPrefix)) continue;
-
+      final dirName = subDir.path.split(RegExp(r'[/\\]')).last;
+      if (!dirName.startsWith('restore-')) continue;
       final normalizedPath = _normalizePath(subDir.path);
       final isReferenced = referencedPrefixes.any(
-        (prefix) =>
-            normalizedPath == prefix ||
-            normalizedPath.startsWith('$prefix/'),
+        (prefix) => normalizedPath == prefix || normalizedPath.startsWith('$prefix/'),
       );
       if (!isReferenced) {
         try {
-          if (onDeleteDirectory != null) {
-            await onDeleteDirectory(subDir);
-          } else {
-            await subDir.delete(recursive: true);
-          }
-        } catch (e) {
-          debugPrint(
-            'Storage cleanup: failed to delete restore set $subDirName: $e',
-          );
+          await subDir.delete(recursive: true);
+        } catch (_) {
+          // Individual deletion failure must not prevent cleaning other directories.
         }
       }
     }
@@ -206,9 +156,8 @@ class StorageCleanup {
 
   static Future<void> _cleanupOrphanPhotos(
     Directory directory,
-    AppData appData, {
-    Future<void> Function(File file)? onDeleteFile,
-  }) async {
+    AppData appData,
+  ) async {
     final photoSetsDir = Directory('${directory.path}/photo-sets');
     if (!await photoSetsDir.exists()) return;
 
@@ -217,78 +166,55 @@ class StorageCleanup {
       referencedPaths.add(_normalizePath(file.path));
     }
 
-    final entries = _listDirectoriesSync(photoSetsDir);
+    final entries = photoSetsDir.listSync().whereType<Directory>().toList();
     for (final subDir in entries) {
+      final dirName = subDir.path.split(RegExp(r'[/\\]')).last;
+      if (!dirName.startsWith('restore-')) continue;
       try {
-        await _deleteOrphanPhotosInDirectory(
-          subDir,
-          referencedPaths,
-          onDeleteFile: onDeleteFile,
-        );
-      } catch (e) {
-        debugPrint(
-          'Storage cleanup: failed to scan ${subDir.path.split(RegExp(r'[/\\]')).last} for orphans: $e',
-        );
+        await _deleteOrphanPhotosInDirectory(subDir, referencedPaths);
+      } catch (_) {
+        // Individual deletion failure must not prevent cleaning other directories.
       }
+    }
+  }
+
+  static Future<void> _cleanupOrphanPhotosInPhotosDir(
+    Directory directory,
+    AppData appData,
+  ) async {
+    final photosDir = Directory('${directory.path}/photos');
+    if (!await photosDir.exists()) return;
+
+    final referencedPaths = <String>{};
+    for (final file in appData.allPhotos) {
+      referencedPaths.add(_normalizePath(file.path));
+    }
+
+    try {
+      await _deleteOrphanPhotosInDirectory(photosDir, referencedPaths);
+    } catch (_) {
+      // Individual deletion failure must not prevent cleaning other files.
     }
   }
 
   static Future<void> _deleteOrphanPhotosInDirectory(
     Directory directory,
-    Set<String> referencedPaths, {
-    Future<void> Function(File file)? onDeleteFile,
-  }) async {
-    final entries = _listSync(directory);
+    Set<String> referencedPaths,
+  ) async {
+    final entries = directory.listSync();
     for (final entry in entries) {
       if (entry is Directory) {
-        await _deleteOrphanPhotosInDirectory(
-          entry,
-          referencedPaths,
-          onDeleteFile: onDeleteFile,
-        );
+        await _deleteOrphanPhotosInDirectory(entry, referencedPaths);
       } else if (entry is File) {
         final normalizedPath = _normalizePath(entry.path);
         if (!referencedPaths.contains(normalizedPath)) {
           try {
-            if (onDeleteFile != null) {
-              await onDeleteFile(entry);
-            } else {
-              await entry.delete();
-            }
-          } catch (e) {
-            debugPrint(
-              'Storage cleanup: failed to delete orphan photo ${entry.path.split(RegExp(r'[/\\]')).last}: $e',
-            );
+            await entry.delete();
+          } catch (_) {
+            // Individual deletion failure must not prevent cleaning other files.
           }
         }
       }
-    }
-  }
-
-  static List<File> _listFilesSync(Directory dir) {
-    try {
-      return dir.listSync().whereType<File>().toList();
-    } catch (e) {
-      debugPrint('Storage cleanup: failed to list files in $dir: $e');
-      return <File>[];
-    }
-  }
-
-  static List<Directory> _listDirectoriesSync(Directory dir) {
-    try {
-      return dir.listSync().whereType<Directory>().toList();
-    } catch (e) {
-      debugPrint('Storage cleanup: failed to list directories in $dir: $e');
-      return <Directory>[];
-    }
-  }
-
-  static List<FileSystemEntity> _listSync(Directory dir) {
-    try {
-      return dir.listSync();
-    } catch (e) {
-      debugPrint('Storage cleanup: failed to list entities in $dir: $e');
-      return <FileSystemEntity>[];
     }
   }
 }

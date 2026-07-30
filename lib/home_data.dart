@@ -4,9 +4,19 @@ extension _HomeDataActions on _HomePageState {
   Future<void> _runStartupCleanup() async {
     try {
       await StorageCleanup.run(appData: _data);
-    } catch (e) {
-      debugPrint('Storage startup cleanup failed: $e');
+    } catch (_) {
+      // Cleanup failures must not block application startup.
     }
+  }
+
+  bool _isCleanupRunning = false;
+
+  void _scheduleStartupCleanup() {
+    if (_isCleanupRunning) return;
+    _isCleanupRunning = true;
+    unawaited(_runStartupCleanup().whenComplete(() {
+      _isCleanupRunning = false;
+    }));
   }
 
   Future<void> _initialize() async {
@@ -17,7 +27,7 @@ extension _HomeDataActions on _HomePageState {
         _data = loaded;
         _isLoading = false;
       });
-      _runStartupCleanup();
+      _scheduleStartupCleanup();
       await _consumeInitialSharedUris();
     } catch (error) {
       if (!mounted) return;
