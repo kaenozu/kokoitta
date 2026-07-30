@@ -29,7 +29,7 @@ void main() {
 
   testWidgets('ホームに地図と旅行タブを表示する', (tester) async {
     await tester.pumpWidget(const KokoittaApp());
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('ここいった'), findsOneWidget);
     expect(find.text('地図'), findsOneWidget);
@@ -47,7 +47,7 @@ void main() {
     final hold = Completer<void>();
     final mutation = coordinator.runMutation(() => hold.future);
     expect(coordinator.isBusy, isTrue);
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
 
     expect(
       tester.widget<IconButton>(find.byTooltip('写真を追加')).onPressed,
