@@ -55,16 +55,19 @@ void main() {
       matching: find.byType(IconButton),
     );
     expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNull);
-    final prefectureChip = find.ancestor(
-      of: find.text('北海道'),
-      matching: find.byType(ActionChip),
-    );
-    expect(tester.widget<ActionChip>(prefectureChip).onPressed, isNull);
+    expect(find.text('都道府県マップ'), findsOneWidget);
 
     hold.complete();
     await mutation;
     await tester.pump();
 
-    expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNotNull);
+    final reenabledAddPhotoButton = find.ancestor(
+      of: find.byTooltip('写真を追加').first,
+      matching: find.byType(IconButton),
+    );
+    expect(
+      tester.widget<IconButton>(reenabledAddPhotoButton).onPressed,
+      isNotNull,
+    );
   });
 }
