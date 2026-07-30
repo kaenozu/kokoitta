@@ -8,7 +8,7 @@ import 'models.dart';
 typedef DeleteFileFn = Future<void> Function(String path);
 typedef DeleteDirFn = Future<void> Function(
   String path, {
-  bool recursive,
+  required bool recursive,
 });
 
 class StorageCleanup {
@@ -29,11 +29,14 @@ class StorageCleanup {
     DeleteFileFn? deleteFileFn,
     DeleteDirFn? deleteDirFn,
   }) async {
-    final deleteFile = deleteFileFn ?? (String path) => File(path).delete();
-    final deleteDirectory =
-        deleteDirFn ??
-        (String path, {bool recursive = false}) =>
-            Directory(path).delete(recursive: recursive);
+    final deleteFile = deleteFileFn ??
+        (String path) async {
+          await File(path).delete();
+        };
+    final deleteDirectory = deleteDirFn ??
+        (String path, {required bool recursive}) async {
+          await Directory(path).delete(recursive: recursive);
+        };
 
     try {
       final directory =
