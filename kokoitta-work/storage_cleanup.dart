@@ -11,20 +11,26 @@ class StorageCleanup {
   static const int _maxSafetySnapshots = 3;
   static const int _stagingMaxAgeHours = 24;
 
-  static Future<void> run({
+static Future<void> run({
     AppData? appData,
     Directory? documentsDirectory,
+    Future<void> Function(String path)? deleteFileFn,
+    Future<void> Function(String path, {bool recursive})? deleteDirFn,
   }) async {
     try {
       final directory = documentsDirectory ?? await getApplicationDocumentsDirectory();
-      await _cleanupManualBackups(directory);
-      await _cleanupSafetySnapshots(directory);
-      await _cleanupStagingDirectories(directory);
+      await _cleanupManualBackups(directory, deleteFileFn: deleteFileFn);
+      await _cleanupSafetySnapshots(directory, deleteFileFn: deleteFileFn);
+      await _cleanupStagingDirectories(directory, deleteDirFn: deleteDirFn);
       if (appData != null) {
-        await _cleanupRestorePhotoSets(directory, appData);
-        await _cleanupOrphanPhotos(directory, appData);
-        await _cleanupOrphanPhotosInPhotosDir(directory, appData);
+        await _cleanupRestorePhotoSets(directory, appData, deleteDirFn: deleteDirFn);
+        await _cleanupOrphanPhotos(directory, appData, deleteFileFn: deleteFileFn, deleteDirFn: deleteDirFn);
+        await _cleanupOrphanPhotosInPhotosDir(directory, appData, deleteFileFn: deleteFileFn);
       }
+    } catch (_) {
+      // Cleanup failures must not block application startup.
+    }
+  }
     } catch (_) {
       // Cleanup failures must not block application startup.
     }
@@ -36,7 +42,10 @@ class StorageCleanup {
 
   static const _backupFileNamePattern = RegExp(r'^kokoitta-backup-\d+\.zip$');
 
-  static Future<void> _cleanupManualBackups(Directory directory) async {
+  static Future<void> _cleanupManualBackups(
+    Directory directory, {
+    Future<void> Function(String path)? deleteFileFn,
+  }) async {
     final backupsDir = Directory('${directory.path}/backups');
     if (!await backupsDir.exists()) return;
 
@@ -50,14 +59,21 @@ class StorageCleanup {
     final toDelete = files.skip(_maxManualBackups);
     for (final file in toDelete) {
       try {
-        await file.delete();
+        if (deleteFileFn != null) {
+          await deleteFileFn(file.path);
+        } else {
+          await file.delete();
+        }
       } catch (_) {
         // Individual deletion failure must not prevent cleaning other files.
       }
     }
   }
 
-  static Future<void> _cleanupSafetySnapshots(Directory directory) async {
+  static Future<void> _cleanupSafetySnapshots(
+    Directory directory, {
+    Future<void> Function(String path)? deleteFileFn,
+  }) async {
     final snapshotsDir = Directory('${directory.path}/safety-backups');
     if (!await snapshotsDir.exists()) return;
 
@@ -71,7 +87,11 @@ class StorageCleanup {
     final toDelete = files.skip(_maxSafetySnapshots);
     for (final file in toDelete) {
       try {
-        await file.delete();
+        if (deleteFileFn != null) {
+          await deleteFileFn(file.path);
+        } else {
+          await file.delete();
+        }
       } catch (_) {
         // Individual deletion failure must not prevent cleaning other files.
       }
@@ -87,7 +107,10 @@ class StorageCleanup {
     return 0;
   }
 
-  static Future<void> _cleanupStagingDirectories(Directory directory) async {
+  static Future<void> _cleanupStagingDirectories(
+    Directory directory, {
+    Future<void> Function(String path, {bool recursive})? deleteDirFn,
+  }) async {
     final now = DateTime.now();
     final maxAge = Duration(hours: _stagingMaxAgeHours);
 
@@ -97,14 +120,18 @@ class StorageCleanup {
 
       final entries = stagingDir.listSync().whereType<Directory>().toList();
       for (final subDir in entries) {
-        final dirName = subDir.path.split(RegExp(r'[/\\]')).last;
+        final dirName = subDir.path.split(RegExp(r'[/\\]')).where((s) => s.isNotEmpty).last;
         final timestampMillis = int.tryParse(dirName);
         if (timestampMillis == null) continue;
 
         final dirTime = DateTime.fromMillisecondsSinceEpoch(timestampMillis);
         if (now.difference(dirTime) > maxAge) {
           try {
-            await subDir.delete(recursive: true);
+            if (deleteDirFn != null) {
+              await deleteDirFn(subDir.path, recursive: true);
+            } else {
+              await subDir.delete(recursive: true);
+            }
           } catch (_) {
             // Individual deletion failure must not prevent cleaning other directories.
           }
@@ -115,8 +142,9 @@ class StorageCleanup {
 
   static Future<void> _cleanupRestorePhotoSets(
     Directory directory,
-    AppData appData,
-  ) async {
+    AppData appData, {
+    Future<void> Function(String path, {bool recursive})? deleteDirFn,
+  }) async {
     final photoSetsDir = Directory('${directory.path}/photo-sets');
     if (!await photoSetsDir.exists()) return;
 
@@ -146,7 +174,11 @@ class StorageCleanup {
       );
       if (!isReferenced) {
         try {
-          await subDir.delete(recursive: true);
+          if (deleteDirFn != null) {
+            await deleteDirFn(subDir.path, recursive: true);
+          } else {
+            await subDir.delete(recursive: true);
+          }
         } catch (_) {
           // Individual deletion failure must not prevent cleaning other directories.
         }
@@ -156,8 +188,9 @@ class StorageCleanup {
 
   static Future<void> _cleanupOrphanPhotos(
     Directory directory,
-    AppData appData,
-  ) async {
+    AppData appData, {
+    Future<void> Function(String path)? deleteFileFn,
+  }) async {
     final photoSetsDir = Directory('${directory.path}/photo-sets');
     if (!await photoSetsDir.exists()) return;
 
@@ -171,7 +204,7 @@ class StorageCleanup {
       final dirName = subDir.path.split(RegExp(r'[/\\]')).last;
       if (!dirName.startsWith('restore-')) continue;
       try {
-        await _deleteOrphanPhotosInDirectory(subDir, referencedPaths);
+        await _deleteOrphanPhotosInDirectory(subDir, referencedPaths, deleteFileFn: deleteFileFn);
       } catch (_) {
         // Individual deletion failure must not prevent cleaning other directories.
       }
@@ -180,8 +213,9 @@ class StorageCleanup {
 
   static Future<void> _cleanupOrphanPhotosInPhotosDir(
     Directory directory,
-    AppData appData,
-  ) async {
+    AppData appData, {
+    Future<void> Function(String path)? deleteFileFn,
+  }) async {
     final photosDir = Directory('${directory.path}/photos');
     if (!await photosDir.exists()) return;
 
@@ -191,7 +225,7 @@ class StorageCleanup {
     }
 
     try {
-      await _deleteOrphanPhotosInDirectory(photosDir, referencedPaths);
+      await _deleteOrphanPhotosInDirectory(photosDir, referencedPaths, deleteFileFn: deleteFileFn);
     } catch (_) {
       // Individual deletion failure must not prevent cleaning other files.
     }
@@ -199,17 +233,22 @@ class StorageCleanup {
 
   static Future<void> _deleteOrphanPhotosInDirectory(
     Directory directory,
-    Set<String> referencedPaths,
-  ) async {
+    Set<String> referencedPaths, {
+    Future<void> Function(String path)? deleteFileFn,
+  }) async {
     final entries = directory.listSync();
     for (final entry in entries) {
       if (entry is Directory) {
-        await _deleteOrphanPhotosInDirectory(entry, referencedPaths);
+        await _deleteOrphanPhotosInDirectory(entry, referencedPaths, deleteFileFn: deleteFileFn);
       } else if (entry is File) {
         final normalizedPath = _normalizePath(entry.path);
         if (!referencedPaths.contains(normalizedPath)) {
           try {
-            await entry.delete();
+            if (deleteFileFn != null) {
+              await deleteFileFn(entry.path);
+            } else {
+              await entry.delete();
+            }
           } catch (_) {
             // Individual deletion failure must not prevent cleaning other files.
           }
