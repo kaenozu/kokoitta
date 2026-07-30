@@ -2,22 +2,24 @@ package com.kaenozu.kokoitta_app
 
 import android.content.Intent
 import android.net.Uri
-import android.os.Bundle
 import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.security.MessageDigest
 
 private const val SHARE_CHANNEL = "com.kaenozu.kokoitta/share"
 private const val MAX_SHARED_IMAGES = 300
@@ -72,28 +74,43 @@ class MainActivity : FlutterActivity() {
         activeRequestId = requestId
         activeProcessJob?.cancel()
         activeProcessJob = scope.launch {
-            val resultMap = withContext(Dispatchers.IO) { processSharedFiles(intent) }
+            val resultMap = processSharedFiles(intent)
             activeRequestId = null
             result.success(resultMap)
         }
     }
 
-    private fun computeRequestId(intent: Intent): String {
-        val stream = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-        val action = intent.action
-        return "${stream?.hashCode() ?: 0}_${action}"
+    internal fun computeRequestId(intent: Intent): String {
+        val singleUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        val multiUris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+        val allUris = (listOfNotNull(singleUri) + (multiUris ?: emptyList())).distinct().sorted()
+        if (allUris.isEmpty()) return "empty_${intent.action}"
+        val joined = allUris.joinToString("|") { it.toString().lowercase() }
+        val digest = MessageDigest.getInstance("MD5").digest(joined.toByteArray())
+        return digest.joinToString("") { "%02x".format(it) } + "_${intent.action}"
     }
 
-    private suspend fun processSharedFiles(source: Intent): Map<String, Any> {
+    internal fun consumeIntent(source: Intent) {
+        source.removeExtra(Intent.EXTRA_STREAM)
+        source.action = null
+    }
+
+    internal fun extractUris(source: Intent): List<Uri> {
         val uris = mutableListOf<Uri>()
         source.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.let(uris::add)
         source.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.let(uris::addAll)
+        return uris.distinct()
+    }
 
-        val receivedCount = uris.distinct().size
+    private suspend fun processSharedFiles(source: Intent): Map<String, Any> {
+        val uris = extractUris(source)
+        val receivedCount = uris.size
+        val requestId = computeRequestId(source)
 
         if (receivedCount > MAX_SHARED_IMAGES) {
-            return mapOf(
-                "requestId" to computeRequestId(source),
+            consumeIntent(source)
+            return mapOf<String, Any>(
+                "requestId" to requestId,
                 "receivedCount" to receivedCount,
                 "acceptedCount" to 0,
                 "successes" to emptyList<Map<String, Any>>(),
@@ -105,11 +122,11 @@ class MainActivity : FlutterActivity() {
         val successes = mutableListOf<Map<String, Any>>()
         val failures = mutableListOf<Map<String, Any>>()
         var cumulativeBytes = 0L
-        val tempFiles = mutableListOf<File>()
+        val incompleteTempFiles = mutableListOf<File>()
 
         try {
-            for ((index, uri) in uris.distinct().withIndex()) {
-                if (!isActive) break
+            for ((index, uri) in uris.withIndex()) {
+                if (!coroutineContext.isActive) break
 
                 val copyResult = withContext(Dispatchers.IO) {
                     copyUriToTempFile(uri, index)
@@ -117,19 +134,18 @@ class MainActivity : FlutterActivity() {
 
                 when {
                     copyResult.errorCode != null -> {
-                        failures.add(mapOf(
+                        failures.add(mapOf<String, Any>(
                             "index" to index,
-                            "errorCode" to copyResult.errorCode,
-                            "reason" to copyResult.reason,
+                            "errorCode" to (copyResult.errorCode ?: "unknown"),
+                            "reason" to (copyResult.reason ?: ""),
                         ))
                     }
                     copyResult.file != null -> {
                         val fileSize = copyResult.file.length()
 
                         if (fileSize > MAX_SINGLE_IMAGE_BYTES) {
-                            tempFiles.add(copyResult.file)
                             copyResult.file.delete()
-                            failures.add(mapOf(
+                            failures.add(mapOf<String, Any>(
                                 "index" to index,
                                 "errorCode" to "single_size_exceeded",
                                 "reason" to "1枚あたりの上限（40MB）を超えています",
@@ -138,9 +154,8 @@ class MainActivity : FlutterActivity() {
                         }
 
                         if (cumulativeBytes + fileSize > MAX_SHARED_BYTES) {
-                            tempFiles.add(copyResult.file)
                             copyResult.file.delete()
-                            failures.add(mapOf(
+                            failures.add(mapOf<String, Any>(
                                 "index" to index,
                                 "errorCode" to "total_size_exceeded",
                                 "reason" to "合計容量の上限（700MB）を超えています",
@@ -149,7 +164,7 @@ class MainActivity : FlutterActivity() {
                         }
 
                         cumulativeBytes += fileSize
-                        successes.add(mapOf(
+                        successes.add(mapOf<String, Any>(
                             "path" to copyResult.file.absolutePath,
                             "name" to (copyResult.displayName ?: "image_${index + 1}"),
                             "mimeType" to (copyResult.mimeType ?: "application/octet-stream"),
@@ -159,16 +174,15 @@ class MainActivity : FlutterActivity() {
                 }
             }
         } finally {
-            for (file in tempFiles) {
+            for (file in incompleteTempFiles) {
                 try { file.delete() } catch (_: Exception) {}
             }
         }
 
-        source.removeExtra(Intent.EXTRA_STREAM)
-        source.action = null
+        consumeIntent(source)
 
-        return mapOf(
-            "requestId" to computeRequestId(source),
+        return mapOf<String, Any>(
+            "requestId" to requestId,
             "receivedCount" to receivedCount,
             "acceptedCount" to successes.size,
             "successes" to successes,
@@ -187,7 +201,7 @@ class MainActivity : FlutterActivity() {
 
     private fun copyUriToTempFile(uri: Uri, index: Int): UriCopyResult {
         val resolver = contentResolver ?: return UriCopyResult(
-            errorCode = "cannot_open", reason = "ContentResolverを取得できませんでした"
+            errorCode = "cannot_open", reason = "ContentResolverを取得できませんでした",
         )
 
         val mimeType = resolver.getType(uri)
@@ -205,18 +219,23 @@ class MainActivity : FlutterActivity() {
             File.createTempFile("share_${index}_", ".$extension", cacheDir)
         } catch (e: IOException) {
             return UriCopyResult(
-                errorCode = "copy_failed", reason = "一時ファイル作成失敗: ${e.message}"
+                errorCode = "copy_failed", reason = "一時ファイル作成失敗: ${e.message}",
             )
         }
 
         return try {
-            resolver.openInputStream(uri)?.use { input ->
+            val inputStream = resolver.openInputStream(uri)
+            if (inputStream == null) {
+                tempFile.delete()
+                return UriCopyResult(
+                    errorCode = "cannot_open", reason = "URIを開けませんでした",
+                )
+            }
+            inputStream.use { input ->
                 FileOutputStream(tempFile).use { output ->
                     input.copyTo(output)
                 }
-            } ?: return UriCopyResult(
-                errorCode = "cannot_open", reason = "URIを開けませんでした"
-            )
+            }
             UriCopyResult(file = tempFile, displayName = displayName, mimeType = mimeType)
         } catch (e: SecurityException) {
             tempFile.delete()
@@ -244,7 +263,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun resolveExtension(mimeType: String?, displayName: String?): String? {
+    internal fun resolveExtension(mimeType: String?, displayName: String?): String? {
         val mimeToExt = mapOf(
             "image/jpeg" to "jpg",
             "image/png" to "png",
@@ -260,15 +279,20 @@ class MainActivity : FlutterActivity() {
             "image/x-icon" to "ico",
         )
 
+        val knownImageExtensions = setOf(
+            "jpg", "jpeg", "png", "heic", "heif", "webp", "gif",
+            "bmp", "wbmp", "svg", "tiff", "tif", "ico",
+        )
+
         val fromMime = mimeType?.lowercase()?.let { mimeToExt[it] }
         if (fromMime != null) return fromMime
 
-        if (displayName != null) {
-            val dotIndex = displayName.lastIndexOf('.')
-            if (dotIndex >= 0 && dotIndex < displayName.length - 1) {
-                val ext = displayName.substring(dotIndex + 1).lowercase()
-                if (ext.isNotEmpty() && ext.all { it.isLetterOrDigit() }) {
-                    return ext
+        if (mimeType != null && mimeType.startsWith("image/")) {
+            if (displayName != null) {
+                val dotIndex = displayName.lastIndexOf('.')
+                if (dotIndex >= 0 && dotIndex < displayName.length - 1) {
+                    val ext = displayName.substring(dotIndex + 1).lowercase()
+                    if (ext in knownImageExtensions) return ext
                 }
             }
         }
