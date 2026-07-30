@@ -1,80 +1,173 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
+import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'models.dart';
+
+part 'backup_restore.dart';
+part 'backup_models.dart';
+
+typedef DocumentsDirectoryProvider = Future<Directory> Function();
+typedef BackupFilePicker = Future<File?> Function();
+
 class BackupService {
-  Future<File> createBackup(List<BackupTrip> trips) async {
-    final archive = Archive();
-    final records = <Map<String, Object>>[];
+  BackupService({
+    DocumentsDirectoryProvider? documentsDirectoryProvider,
+    BackupFilePicker? backupFilePicker,
+  })  : _documentsDirectoryProvider =
+            documentsDirectoryProvider ?? getApplicationDocumentsDirectory,
+        _backupFilePicker = backupFilePicker ?? _pickBackupFile;
+
+  static const String appId = 'com.kaenozu.kokoitta_app';
+  static const int currentFormatVersion = 2;
+  static const int maxTrips = 10;
+  static const int maxPhotos = 300;
+  static const int maxCompressedBytes = 700 * 1024 * 1024;
+  static const int maxSinglePhotoBytes = 40 * 1024 * 1024;
+  static const int maxUncompressedBytes = 900 * 1024 * 1024;
+
+  final DocumentsDirectoryProvider _documentsDirectoryProvider;
+  final BackupFilePicker _backupFilePicker;
+
+  Future<File> createBackup(AppData data) {
+    return _createBackup(data, folderName: 'backups');
+  }
+
+  Future<File> createSafetySnapshot(AppData data) {
+    return _createBackup(data, folderName: 'safety-backups');
+  }
+
+  Future<PreparedRestore?> prepareRestore() =>
+      _BackupRestoreOperations(this).prepareRestore();
+
+  Future<PreparedRestore> prepareRestoreFile(File file) =>
+      _BackupRestoreOperations(this).prepareRestoreFile(file);
+
+  Future<PreparedRestore> prepareRestoreBytes(List<int> bytes) =>
+      _BackupRestoreOperations(this).prepareRestoreBytes(bytes);
+
+  Future<void> shareBackup(File file) =>
+      _BackupRestoreOperations(this).shareBackup(file);
+
+  Future<File> _createBackup(
+    AppData data, {
+    required String folderName,
+  }) async {
+    final checksums = <String, String>{};
+    final archiveFiles = <({File file, String archivePath})>[];
     var totalBytes = 0;
-    for (var tripIndex = 0; tripIndex < trips.length; tripIndex++) {
-      final trip = trips[tripIndex];
+    var photoCount = 0;
+
+    Future<List<String>> inspectPhotos(
+      Iterable<File> photos,
+      String group,
+    ) async {
       final paths = <String>[];
-      for (var photoIndex = 0; photoIndex < trip.photos.length; photoIndex++) {
-        final file = trip.photos[photoIndex];
-        if (!file.existsSync()) continue;
-        final bytes = await file.readAsBytes();
-        final archivePath = 'photos/$tripIndex-$photoIndex-${file.uri.pathSegments.last}';
-        archive.addFile(ArchiveFile(archivePath, bytes.length, bytes));
+      var index = 0;
+      for (final file in photos) {
+        if (!await file.exists()) {
+          throw FileSystemException('バックアップ対象の写真がありません', file.path);
+        }
+        final length = await file.length();
+        if (length > maxSinglePhotoBytes) {
+          throw FormatException('写真1枚の容量が上限を超えています: ${file.path}');
+        }
+        totalBytes += length;
+        photoCount += 1;
+        if (totalBytes > maxUncompressedBytes || photoCount > maxPhotos) {
+          throw const FormatException('バックアップ対象の写真容量または枚数が上限を超えています');
+        }
+        final archivePath =
+            'photos/$group-${index.toString().padLeft(3, '0')}${_safeExtension(file.path)}';
+        final digest = await sha256.bind(file.openRead()).first;
+        checksums[archivePath] = digest.toString();
+        archiveFiles.add((file: file, archivePath: archivePath));
         paths.add(archivePath);
-        totalBytes += bytes.length;
+        index += 1;
       }
-      records.add({'title': trip.title, 'photos': paths});
+      return paths;
     }
-    final manifest = {
-      'appId': 'com.kaenozu.kokoitta_app',
-      'backupFormatVersion': 1,
+
+    final tripRecords = <Map<String, Object>>[];
+    for (var index = 0; index < data.trips.length; index++) {
+      final trip = data.trips[index];
+      tripRecords.add(<String, Object>{
+        'id': trip.id,
+        'title': trip.title,
+        'photos': await inspectPhotos(trip.photos, 'trip-$index'),
+      });
+    }
+    final unassignedPaths = await inspectPhotos(
+      data.unassignedPhotos,
+      'unassigned',
+    );
+
+    final records = <String, Object>{
+      'trips': tripRecords,
+      'unassignedPhotos': unassignedPaths,
+      'prefectureStates': data.prefectureStates,
+    };
+    final manifest = <String, Object>{
+      'appId': appId,
+      'backupFormatVersion': currentFormatVersion,
       'createdAt': DateTime.now().toUtc().toIso8601String(),
-      'tripCount': records.length,
-      'photoCount': records.fold<int>(0, (sum, trip) => sum + (trip['photos'] as List).length),
+      'tripCount': tripRecords.length,
+      'photoCount': photoCount,
       'totalUncompressedBytes': totalBytes,
       'checksumsAlgorithm': 'sha-256',
+      'checksums': checksums,
     };
-    archive.addFile(ArchiveFile('manifest.json', utf8.encode(jsonEncode(manifest)).length, utf8.encode(jsonEncode(manifest))));
-    archive.addFile(ArchiveFile('trips.json', utf8.encode(jsonEncode(records)).length, utf8.encode(jsonEncode(records))));
-    final encoded = ZipEncoder().encode(archive);
-    final directory = await getApplicationDocumentsDirectory();
-    final backupDirectory = Directory('${directory.path}/backups')..createSync(recursive: true);
-    final file = File('${backupDirectory.path}/kokoitta-backup-${DateTime.now().millisecondsSinceEpoch}.zip');
-    return file.writeAsBytes(encoded, flush: true);
-  }
 
-  Future<List<BackupTrip>> restoreBackup() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['zip'], withData: true);
-    if (result == null || result.files.single.bytes == null) return <BackupTrip>[];
-    final archive = ZipDecoder().decodeBytes(result.files.single.bytes!);
-    final manifestFile = archive.findFile('manifest.json');
-    final tripsFile = archive.findFile('trips.json');
-    if (manifestFile == null || tripsFile == null) throw const FormatException('manifest.json または trips.json がありません');
-    final manifest = jsonDecode(utf8.decode(manifestFile.content as List<int>)) as Map<String, dynamic>;
-    if (manifest['appId'] != 'com.kaenozu.kokoitta_app' || manifest['backupFormatVersion'] != 1) throw const FormatException('対応していないバックアップ形式です');
-    final directory = await getApplicationDocumentsDirectory();
-    final photoDirectory = Directory('${directory.path}/photos')..createSync(recursive: true);
-    final records = (jsonDecode(utf8.decode(tripsFile.content as List<int>)) as List).cast<Map<String, dynamic>>();
-    final restored = <BackupTrip>[];
-    for (final record in records) {
-      final photos = <File>[];
-      for (final path in (record['photos'] as List).cast<String>()) {
-        final entry = archive.findFile(path);
-        if (entry == null) throw FormatException('写真が見つかりません: $path');
-        final name = '${DateTime.now().microsecondsSinceEpoch}_${path.split('/').last}';
-        photos.add(await File('${photoDirectory.path}/$name').writeAsBytes(entry.content as List<int>, flush: true));
+    final directory = await _documentsDirectoryProvider();
+    final backupDirectory = Directory('${directory.path}/$folderName');
+    await backupDirectory.create(recursive: true);
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final file = File(
+      '${backupDirectory.path}/kokoitta-backup-$timestamp.zip',
+    );
+    final workDirectory = Directory(
+      '${directory.path}/backup-staging/$timestamp',
+    );
+    await workDirectory.create(recursive: true);
+    final manifestFile = File('${workDirectory.path}/manifest.json');
+    final recordsFile = File('${workDirectory.path}/trips.json');
+    await manifestFile.writeAsString(jsonEncode(manifest), flush: true);
+    await recordsFile.writeAsString(jsonEncode(records), flush: true);
+
+    final encoder = ZipFileEncoder();
+    var opened = false;
+    try {
+      encoder.create(file.path);
+      opened = true;
+      for (final archiveFile in archiveFiles) {
+        await encoder.addFile(archiveFile.file, archiveFile.archivePath);
       }
-      restored.add(BackupTrip(record['title'] as String, photos));
+      await encoder.addFile(manifestFile, 'manifest.json');
+      await encoder.addFile(recordsFile, 'trips.json');
+      await encoder.close();
+      opened = false;
+      if (await file.length() > maxCompressedBytes) {
+        await file.delete();
+        throw const FormatException('作成したバックアップの容量が上限を超えています');
+      }
+      return file;
+    } catch (_) {
+      if (opened) {
+        await encoder.close();
+        opened = false;
+      }
+      if (await file.exists()) await file.delete();
+      rethrow;
+    } finally {
+      if (opened) await encoder.close();
+      if (await workDirectory.exists()) {
+        await workDirectory.delete(recursive: true);
+      }
     }
-    return restored;
   }
-
-  Future<void> shareBackup(File file) => SharePlus.instance.share(ShareParams(files: [XFile(file.path)], text: 'ここいったのバックアップ'));
 }
-
-class BackupTrip {
-  BackupTrip(this.title, this.photos);
-  final String title;
-  final List<File> photos;
-}
-
