@@ -53,7 +53,8 @@ Secrets が不足している場合、ワークフローはビルド前に失敗
 
 - **versionName**: タグ `vX.Y.Z` から `X.Y.Z` を抽出して使用。手動実行の場合は入力 `version` をそのまま使用
 - **versionCode**: `github.run_number` を使用。再実行時に同じ versionCode になる（上書き防止）
-- **Commit SHA**: 手動実行では常に `main` の先端をビルド対象とし、Release タグはその commit SHA に作成される
+- **Commit SHA**: タグ push ではタグが指す commit、手動実行では `main` の先端をビルド対象とする
+- **タグ commit の検証**: タグ push では、タグが指す commit が `main` の履歴に含まれる場合だけ続行する
 - **タグと commit の一致**: 同名の Git タグが既に存在し、異なる commit を指している場合は失敗する。同名 Release が既に存在する場合も失敗する
 - **出力**: APK と AAB の両方を生成し、GitHub Release に添付する
 - 不正なタグ形式（`v1.2`、`1.2.3`、`v1.2.3-beta` など）は検証ステップでビルド前に失敗します
@@ -61,32 +62,35 @@ Secrets が不足している場合、ワークフローはビルド前に失敗
 ### リリース手順（タグ push）
 
 ```bash
-# 1. pubspec.yaml の version を更新（必要に応じて）
-# 2. タグを作成して push
+# 1. main にリリース対象 commit が含まれることを確認
+# 2. pubspec.yaml の version を更新（必要に応じて）
+# 3. リリース対象 commit にタグを作成して push
 git tag v1.2.0
 git push origin v1.2.0
-# 3. GitHub Actions が自動起動し、APK + AAB を GitHub Release へ添付
+# 4. GitHub Actions がタグの commit をビルドし、APK + AAB を GitHub Release へ添付
 ```
 
 ### リリース手順（手動実行）
 
 1. GitHub リポジトリ → Actions → Android Release → Run workflow
-2. 入力:
+2. Branch は `main` を選択
+3. 入力:
     - **version**: `1.2.0`（`v` なしの semver）
-3. ワークフローは `main` の先端をチェックアウトし、ビルド・署名・Release 作成を実行する
-4. Release タグ `v1.2.0` は `main` の先端 commit SHA に作成される
-5. 同名タグが別の SHA を指している場合、または同名 Release が既に存在する場合は失敗する
+4. ワークフローは `main` の先端をチェックアウトし、ビルド・署名・Release 作成を実行する
+5. Release タグ `v1.2.0` は `main` の先端 commit SHA に作成される
+6. 同名タグが別の SHA を指している場合、または同名 Release が既に存在する場合は失敗する
 
 ### セキュリティ
 
 #### 信頼境界（コードで保証）
 
 - 手動リリース（`workflow_dispatch`）は常に `main` ブランチの先端をビルド対象とします。任意の ref を指定することはできません
+- タグ push はタグが指す commit をビルドし、その commit が `main` の履歴に含まれることを Secrets なしの validate ジョブで検証します
 - `release` ジョブは `if:` 条件により、`workflow_dispatch` では `refs/heads/main`、`push`（タグ）では `refs/tags/v*` の場合のみ実行されます
 - 署名 Secrets は `validate` ジョブには渡されません。`release` ジョブでのみ使用され、第三者Action実行前に削除されます
 - `validate` ジョブは `contents: read` 権限のみで実行され、Release 作成は `release` ジョブ（`contents: write`）に分離されています
 - ビルドと署名の後、第三者Action（`softprops/action-gh-release`）の実行**前**に署名ファイル（keystore, key.properties）を削除します。`if: always()` により失敗経路でも削除が実行され、`continue-on-error: true` により cleanup の失敗が公開を妨げません
-- `softprops/action-gh-release` は可変タグ `@v2` ではなく、完全 commit SHA に固定しています（現在のバージョン: v2.6.2）
+- release workflow で使用する Action は可変タグではなく、完全 commit SHA に固定します
 - 同一バージョンの重複リリースを防ぐため、`concurrency` により直列化されます
 - イベント入力（version, tag名）は `env:` 経由で受け渡し、shell 内で直接展開しません。`scripts/validate-release.sh` の semver 検証により shell injection を防止します
 
@@ -144,7 +148,7 @@ GitHub Actions の仕様上、タグ push で起動した workflow は、その�
 - 同一バージョンの Release が既に存在する場合、ワークフローは早期に失敗します
 - 同名の Git タグが既に存在し、異なる commit を指している場合も失敗します
 - 再実行（Re-run）は同じ versionCode を生成するため、既存の Release を上書きしません
-- 手動リリースでは `main` の先端がビルド対象となり、ログと成果物ファイル名に commit SHA が含まれます
+- タグ push ではタグが指す `main` 履歴上の commit、手動リリースでは `main` の先端がビルド対象となり、ログと成果物ファイル名に commit SHA が含まれます
 - 署名キーストアと key.properties は第三者Action（Release公開）の**前に自動削除**されます
 - cleanup は失敗経路でも実行されます（`if: always()`）
 - エラー時は validate ジョブのログを確認してください。署名シークレット関連のエラーは fail-fast で停止します
