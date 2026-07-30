@@ -233,7 +233,7 @@ void main() {
     );
   });
 
-  test('過大な旅行名を拒否する', () async {
+  test('過大な旅行名を200文字に切り詰めて復元する', () async {
     final archive = Archive();
     final longTitle = 'あ' * 250;
     final manifest = utf8.encode(jsonEncode(<String, Object>{
@@ -256,10 +256,99 @@ void main() {
 
     final bytes = ZipEncoder().encode(archive);
 
-    await expectLater(
-      service.prepareRestoreBytes(bytes),
-      throwsA(isA<FormatException>()),
-    );
+    final prepared = await service.prepareRestoreBytes(bytes);
+    expect(prepared.trips.single.title.length, 200);
+    expect(prepared.trips.single.title, 'あ' * 200);
+  });
+
+  test('未知の都道府県キーを安全に無視して復元する', () async {
+    final archive = Archive();
+    final manifest = utf8.encode(jsonEncode(<String, Object>{
+      'appId': BackupService.appId,
+      'backupFormatVersion': 2,
+      'tripCount': 0,
+      'photoCount': 0,
+      'totalUncompressedBytes': 0,
+      'checksumsAlgorithm': 'sha-256',
+      'checksums': const <String, String>{},
+    }));
+    final records = utf8.encode(jsonEncode(<String, Object>{
+      'trips': const <Object>[],
+      'unassignedPhotos': const <String>[],
+      'prefectureStates': <String, String>{
+        '北海道': 'visited',
+        '未知県': 'visited',
+      },
+    }));
+    archive
+      ..addFile(ArchiveFile('manifest.json', manifest.length, manifest))
+      ..addFile(ArchiveFile('trips.json', records.length, records));
+
+    final bytes = ZipEncoder().encode(archive);
+
+    final prepared = await service.prepareRestoreBytes(bytes);
+    expect(prepared.prefectureStates.containsKey('未知県'), isFalse);
+    expect(prepared.prefectureStates['北海道'], 'visited');
+  });
+
+  test('不正な状態値をunvisitedに正規化して復元する', () async {
+    final archive = Archive();
+    final manifest = utf8.encode(jsonEncode(<String, Object>{
+      'appId': BackupService.appId,
+      'backupFormatVersion': 2,
+      'tripCount': 0,
+      'photoCount': 0,
+      'totalUncompressedBytes': 0,
+      'checksumsAlgorithm': 'sha-256',
+      'checksums': const <String, String>{},
+    }));
+    final records = utf8.encode(jsonEncode(<String, Object>{
+      'trips': const <Object>[],
+      'unassignedPhotos': const <String>[],
+      'prefectureStates': <String, String>{
+        '東京': 'invalid_state',
+      },
+    }));
+    archive
+      ..addFile(ArchiveFile('manifest.json', manifest.length, manifest))
+      ..addFile(ArchiveFile('trips.json', records.length, records));
+
+    final bytes = ZipEncoder().encode(archive);
+
+    final prepared = await service.prepareRestoreBytes(bytes);
+    expect(prepared.prefectureStates['東京'], 'unvisited');
+  });
+
+  test('制御文字を含む旅行名を正規化して復元する', () async {
+    final archive = Archive();
+    final manifest = utf8.encode(jsonEncode(<String, Object>{
+      'appId': BackupService.appId,
+      'backupFormatVersion': 2,
+      'tripCount': 1,
+      'photoCount': 0,
+      'totalUncompressedBytes': 0,
+      'checksumsAlgorithm': 'sha-256',
+      'checksums': const <String, String>{},
+    }));
+    final records = utf8.encode(jsonEncode(<String, Object>{
+      'trips': <Object>[
+        <String, Object>{
+          'id': 'test-trip-1',
+          'title': '東京\n旅行',
+          'photos': <String>[],
+        },
+      ],
+      'unassignedPhotos': const <String>[],
+      'prefectureStates': const <String, String>{},
+    }));
+    archive
+      ..addFile(ArchiveFile('manifest.json', manifest.length, manifest))
+      ..addFile(ArchiveFile('trips.json', records.length, records));
+
+    final bytes = ZipEncoder().encode(archive);
+
+    final prepared = await service.prepareRestoreBytes(bytes);
+    expect(prepared.trips.single.title, '東京 旅行');
   });
 
   test('過大なリストまたはMapを拒否する', () async {

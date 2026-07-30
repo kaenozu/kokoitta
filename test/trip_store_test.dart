@@ -110,8 +110,104 @@ void main() {
     final preferences = await SharedPreferences.getInstance();
 
     expect(loaded.prefectureStates['北海道'], 'visited');
-    expect(preferences.getString(TripStore.dataKey), pending);
+    expect(preferences.getString(TripStore.dataKey), isNotNull);
     expect(preferences.getString(TripStore.pendingKey), isNull);
+  });
+
+  test('不明な都道府県キーを読み込んでも訪問数が47を超えない', () async {
+    final store = TripStore();
+    final data = AppData(
+      trips: const <Trip>[],
+      unassignedPhotos: const <File>[],
+      prefectureStates: <String, String>{
+        '北海道': 'visited',
+        '未知県': 'visited',
+        '東京': 'visited',
+      },
+    );
+    await store.save(data);
+
+    final loaded = await store.load();
+    expect(loaded.prefectureStates.containsKey('未知県'), isFalse);
+    expect(loaded.prefectureStates.values.where((s) => s == 'visited').length,
+        lessThanOrEqualTo(47));
+  });
+
+  test('不正な状態値をunvisitedに正規化する', () async {
+    final store = TripStore();
+    final data = AppData(
+      trips: const <Trip>[],
+      unassignedPhotos: const <File>[],
+      prefectureStates: const <String, String>{
+        '北海道': 'invalid',
+        '東京': 'unknown',
+      },
+    );
+    await store.save(data);
+
+    final loaded = await store.load();
+    expect(loaded.prefectureStates['北海道'], 'unvisited');
+    expect(loaded.prefectureStates['東京'], 'unvisited');
+  });
+
+  test('正規化後にprefectureStatesからunvisitedエントリが除外される',
+      () async {
+    final store = TripStore();
+    final data = AppData(
+      trips: const <Trip>[],
+      unassignedPhotos: const <File>[],
+      prefectureStates: const <String, String>{
+        '北海道': 'unvisited',
+        '東京': 'visited',
+      },
+    );
+    await store.save(data);
+
+    final loaded = await store.load();
+    expect(loaded.prefectureStates.containsKey('北海道'), isFalse);
+    expect(loaded.prefectureStates.containsKey('東京'), isTrue);
+  });
+
+  test('空白のみの旅行名を持つトリップは読み込み時にスキップされる',
+      () async {
+    final store = TripStore();
+    final raw = jsonEncode(<String, Object>{
+      'schemaVersion': TripStore.schemaVersion,
+      'trips': <Object>[
+        <String, Object>{'title': '   ', 'photos': <String>[]},
+        <String, Object>{'title': '有効な旅行', 'photos': <String>[]},
+      ],
+      'unassignedPhotos': const <String>[],
+      'prefectureStates': const <String, String>{},
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.dataKey: raw,
+    });
+
+    final loaded = await store.load();
+    expect(loaded.trips.length, 1);
+    expect(loaded.trips.single.title, '有効な旅行');
+  });
+
+  test('前後空白と制御文字を含む旅行名が正規化される', () async {
+    final store = TripStore();
+    final raw = jsonEncode(<String, Object>{
+      'schemaVersion': TripStore.schemaVersion,
+      'trips': <Object>[
+        <String, Object>{
+          'title': ' \n東京\t旅行\r ',
+          'photos': <String>[],
+        },
+      ],
+      'unassignedPhotos': const <String>[],
+      'prefectureStates': const <String, String>{},
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.dataKey: raw,
+    });
+
+    final loaded = await store.load();
+    expect(loaded.trips.single.title, '東京 旅行');
   });
 
   test('同じ写真の重複所属を保存しない', () async {

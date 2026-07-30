@@ -316,7 +316,7 @@ void _validateMetadataEntrySize(
   }
 }
 
-_ParsedBackup _parseVersion1(Object? value) {
+  _ParsedBackup _parseVersion1(Object? value) {
   if (value is! List) {
     throw const FormatException('旅行データの形式が正しくありません');
   }
@@ -326,10 +326,18 @@ _ParsedBackup _parseVersion1(Object? value) {
       throw const FormatException('旅行データが壊れています');
     }
     final record = Map<String, dynamic>.from(recordValue);
+    final titleValue = record['title'];
+    if (titleValue is! String) {
+      continue;
+    }
+    final title = normalizeTripTitle(titleValue);
+    if (title == null) {
+      continue;
+    }
     trips.add(
       _ParsedTrip(
         id: createEntityId('trip'),
-        title: _requiredString(record['title'], '旅行名'),
+        title: title,
         photoPaths: _requiredStringList(record['photos'], '写真一覧'),
       ),
     );
@@ -341,7 +349,7 @@ _ParsedBackup _parseVersion1(Object? value) {
   );
 }
 
-_ParsedBackup _parseVersion2(Object? value) {
+  _ParsedBackup _parseVersion2(Object? value) {
   if (value is! Map) {
     throw const FormatException('旅行データの形式が正しくありません');
   }
@@ -360,10 +368,18 @@ _ParsedBackup _parseVersion2(Object? value) {
     final record = Map<String, dynamic>.from(recordValue);
     var id = _requiredString(record['id'], '旅行ID');
     if (!seenIds.add(id)) id = createEntityId('trip');
+    final titleValue = record['title'];
+    if (titleValue is! String) {
+      continue;
+    }
+    final title = normalizeTripTitle(titleValue);
+    if (title == null) {
+      continue;
+    }
     trips.add(
       _ParsedTrip(
         id: id,
-        title: _requiredString(record['title'], '旅行名'),
+        title: title,
         photoPaths: _requiredStringList(record['photos'], '写真一覧'),
       ),
     );
@@ -385,7 +401,7 @@ _ParsedBackup _parseVersion2(Object? value) {
       root['unassignedPhotos'],
       '旅行未設定の写真一覧',
     ),
-    prefectureStates: prefectureStates,
+    prefectureStates: normalizePrefectureStates(prefectureStates),
   );
 }
 

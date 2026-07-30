@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models.dart';
+import 'validators.dart';
 
 typedef PreferencesFactory = Future<SharedPreferences> Function();
 
@@ -30,7 +31,7 @@ class TripStore {
     if (pending != null) {
       try {
         final recovered = _decode(pending);
-        await _writeCanonical(preferences, pending);
+        await _writeNormalizedAppData(preferences, recovered);
         return recovered;
       } on FormatException {
         await preferences.remove(pendingKey);
@@ -39,7 +40,9 @@ class TripStore {
 
     final stored = preferences.getString(dataKey);
     if (stored != null) {
-      return _decode(stored);
+      final recovered = _decode(stored);
+      await _writeNormalizedAppData(preferences, recovered);
+      return recovered;
     }
 
     final migrated = _loadIntermediate(preferences) ?? _loadLegacy(preferences);
@@ -49,6 +52,18 @@ class TripStore {
     await preferences.remove(legacyTripsKey);
     await preferences.remove(legacyPrefectureStatesKey);
     return migrated;
+  }
+
+  Future<void> _writeNormalizedAppData(
+    SharedPreferences preferences,
+    AppData data,
+  ) async {
+    final encoded = jsonEncode(_encode(data));
+    final written = await preferences.setString(dataKey, encoded);
+    if (!written) {
+      throw FileSystemException('保存データを書き込めませんでした');
+    }
+    await preferences.remove(pendingKey);
   }
 
   Future<void> save(AppData data) async {
@@ -101,12 +116,16 @@ class TripStore {
     final trips = <Trip>[];
     for (final value in tripsValue) {
       if (value is! Map) {
-        throw const FormatException('旅行データが壊れています');
+        continue;
       }
       final record = Map<String, dynamic>.from(value);
       final title = record['title'];
       if (title is! String) {
-        throw const FormatException('旅行名が壊れています');
+        continue;
+      }
+      final normalizedTitle = normalizeTripTitle(title);
+      if (normalizedTitle == null) {
+        continue;
       }
       var id = record['id'];
       if (id is! String || id.isEmpty || seenTripIds.contains(id)) {
@@ -116,7 +135,7 @@ class TripStore {
       trips.add(
         Trip(
           id: id,
-          title: title,
+          title: normalizedTitle,
           photos: _readExistingUniqueFiles(
             record['photos'],
             claimedPaths,
@@ -141,7 +160,7 @@ class TripStore {
         decoded['unassignedPhotos'],
         claimedPaths,
       ),
-      prefectureStates: prefectureStates,
+      prefectureStates: normalizePrefectureStates(prefectureStates),
     );
   }
 
@@ -160,6 +179,13 @@ class TripStore {
       return paths;
     }
 
+    final prefectureStates = <String, String>{};
+    for (final entry in data.prefectureStates.entries) {
+      if (entry.value != 'unvisited') {
+        prefectureStates[entry.key] = entry.value;
+      }
+    }
+
     return <String, Object>{
       'schemaVersion': schemaVersion,
       'trips': data.trips
@@ -172,7 +198,7 @@ class TripStore {
           )
           .toList(growable: false),
       'unassignedPhotos': encodeFiles(data.unassignedPhotos),
-      'prefectureStates': data.prefectureStates,
+      'prefectureStates': prefectureStates,
     };
   }
 
@@ -190,17 +216,21 @@ class TripStore {
       }
       for (final value in decoded) {
         if (value is! Map) {
-          throw const FormatException('移行元の旅行データが壊れています');
+          continue;
         }
         final record = Map<String, dynamic>.from(value);
         final title = record['title'];
         if (title is! String) {
-          throw const FormatException('移行元の旅行名が壊れています');
+          continue;
+        }
+        final normalizedTitle = normalizeTripTitle(title);
+        if (normalizedTitle == null) {
+          continue;
         }
         trips.add(
           Trip(
             id: createEntityId('trip'),
-            title: title,
+            title: normalizedTitle,
             photos: _readExistingUniqueFiles(
               record['photos'],
               claimedPaths,
@@ -226,7 +256,7 @@ class TripStore {
     return AppData(
       trips: trips,
       unassignedPhotos: const <File>[],
-      prefectureStates: prefectureStates,
+      prefectureStates: normalizePrefectureStates(prefectureStates),
     );
   }
 
@@ -238,6 +268,8 @@ class TripStore {
       final separator = record.indexOf('|');
       if (separator <= 0) continue;
       final title = record.substring(0, separator);
+      final normalizedTitle = normalizeTripTitle(title);
+      if (normalizedTitle == null) continue;
       final photos = record
           .substring(separator + 1)
           .split(';;')
@@ -249,7 +281,7 @@ class TripStore {
       trips.add(
         Trip(
           id: createEntityId('trip'),
-          title: title,
+          title: normalizedTitle,
           photos: photos,
         ),
       );
@@ -270,7 +302,7 @@ class TripStore {
     return AppData(
       trips: trips,
       unassignedPhotos: const <File>[],
-      prefectureStates: prefectureStates,
+      prefectureStates: normalizePrefectureStates(prefectureStates),
     );
   }
 
