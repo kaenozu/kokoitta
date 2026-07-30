@@ -252,7 +252,11 @@ class StorageCleanup {
 
   static List<Directory> _listDirectories(Directory directory) {
     try {
-      return directory.listSync().whereType<Directory>().toList();
+      final directories = directory.listSync().whereType<Directory>().toList()
+        ..sort(
+          (a, b) => _normalizePath(a.path).compareTo(_normalizePath(b.path)),
+        );
+      return directories;
     } catch (error) {
       debugPrint(
         'Storage cleanup: failed to list directories in $directory: $error',
