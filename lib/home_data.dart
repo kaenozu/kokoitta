@@ -304,16 +304,52 @@ extension _HomeDataActions on _HomePageState {
       await _coordinator.runMutation(() async {
         final trip = _data.trips.where((item) => item.id == tripId).firstOrNull;
         if (trip == null) throw StateError('削除する旅行が見つかりません');
+        final root = await getApplicationDocumentsDirectory();
+        final pending = await const PendingDeletionStore().stage(trip, root);
         await _commitData(removeTrip(_data, tripId));
-        final failures = await _deleteFiles(trip.photos);
-        _showMessage(
-          failures == 0
-              ? '旅行と写真を削除しました'
-              : '旅行を削除しましたが、$failures枚のファイル削除に失敗しました',
+        _pendingDeletionTimer?.cancel();
+        _pendingDeletion = pending;
+        _pendingDeletionTimer = Timer(
+          PendingDeletionStore.undoWindow,
+          () async {
+            final current = _pendingDeletion;
+            if (current == null) return;
+            await const PendingDeletionStore().finalize(current);
+            _pendingDeletion = null;
+          },
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('旅行を削除しました'),
+            duration: PendingDeletionStore.undoWindow,
+            action: SnackBarAction(
+              label: '元に戻す',
+              onPressed: () => unawaited(_undoPendingDeletion()),
+            ),
+          ),
         );
       });
     } catch (error) {
       _showError('旅行の削除', error);
+    }
+  }
+
+  Future<void> _undoPendingDeletion() async {
+    final pending = _pendingDeletion;
+    if (pending == null) return;
+    try {
+      await _coordinator.runMutation(() async {
+        final restored = await const PendingDeletionStore().restore(pending);
+        final restoredTrip = pending.trip.copyWith(photos: restored);
+        await _commitData(addNewTrip(_data, restoredTrip));
+        _pendingDeletionTimer?.cancel();
+        _pendingDeletion = null;
+        _showMessage('旅行と写真を元に戻しました');
+      });
+    } catch (error) {
+      _showError('削除の取り消し', error);
     }
   }
 

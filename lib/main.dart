@@ -14,6 +14,7 @@ import 'operation_coordinator.dart';
 import 'storage_cleanup.dart';
 import 'trip_store.dart';
 import 'validators.dart';
+import 'pending_deletion.dart';
 
 part 'home_data.dart';
 part 'home_view.dart';
@@ -120,6 +121,8 @@ class _HomePageState extends State<HomePage> {
   int _tab = 0;
   int? _importCompleted;
   int? _importTotal;
+  PendingDeletion? _pendingDeletion;
+  Timer? _pendingDeletionTimer;
   bool _isCleanupRunning = false;
   StreamSubscription<OperationStatus>? _statusSub;
 
@@ -136,6 +139,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _pendingDeletionTimer?.cancel();
     _statusSub?.cancel();
     _coordinator.dispose();
     _shareChannel.setMethodCallHandler(null);
