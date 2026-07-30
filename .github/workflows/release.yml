@@ -15,11 +15,6 @@ on:
         description: 'Release version (semver: X.Y.Z, e.g. 1.2.3)'
         required: true
         type: string
-      ref:
-        description: 'Git ref to build from (branch, tag, or full SHA)'
-        required: true
-        default: 'main'
-        type: string
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
@@ -38,10 +33,10 @@ jobs:
       short_sha: ${{ steps.resolve.outputs.short_sha }}
       release_tag: ${{ steps.resolve.outputs.release_tag }}
     steps:
-      - name: Checkout
+      - name: Checkout main (trusted)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}
+          ref: main
 
       - name: Validate and resolve version
         id: resolve
@@ -193,3 +188,9 @@ jobs:
           files: |
             kokoitta_app-*.apk
             kokoitta_app-*.aab
+
+      - name: Cleanup signing secrets
+        if: always()
+        run: |
+          rm -f android/app/release-keystore.jks
+          rm -f android/key.properties

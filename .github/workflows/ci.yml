@@ -49,5 +49,8 @@ jobs:
       - name: Test release validation
         run: bash test/validate_release_test.sh
 
+      - name: Validate workflow security structure
+        run: bash test/validate_workflow_security.sh
+
       - name: Build debug APK
         run: flutter build apk --debug
