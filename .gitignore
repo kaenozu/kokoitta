@@ -5,6 +5,7 @@
 .pub-cache/
 .pub/
 build/
+android/**/GeneratedPluginRegistrant.java
 coverage/
 android/.gradle/
 android/local.properties
