@@ -51,6 +51,8 @@ extension _HomeBackupActions on _HomePageState {
       final file = await _backupService.createBackup(_data);
       if (!mounted) return;
       await _backupService.shareBackup(file);
+      if (!mounted) return;
+      _showMessage('バックアップを共有しました。端末内には最新5件まで保持されます。');
     } catch (error) {
       _showError('バックアップ作成', error);
     }

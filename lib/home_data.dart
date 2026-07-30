@@ -4,8 +4,8 @@ extension _HomeDataActions on _HomePageState {
   Future<void> _runStartupCleanup() async {
     try {
       await StorageCleanup.run(appData: _data);
-    } catch (_) {
-      // Cleanup failures must not block application startup.
+    } catch (e) {
+      debugPrint('Storage startup cleanup failed: $e');
     }
   }
 
