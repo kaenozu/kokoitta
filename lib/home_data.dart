@@ -12,9 +12,11 @@ extension _HomeDataActions on _HomePageState {
   void _scheduleStartupCleanup() {
     if (_isCleanupRunning) return;
     _isCleanupRunning = true;
-    unawaited(_runStartupCleanup().whenComplete(() {
-      _isCleanupRunning = false;
-    }));
+    unawaited(
+      _runStartupCleanup().whenComplete(() {
+        _isCleanupRunning = false;
+      }),
+    );
   }
 
   Future<void> _initialize() async {
@@ -38,9 +40,8 @@ extension _HomeDataActions on _HomePageState {
 
   Future<void> _consumeInitialSharedUris() async {
     try {
-      final result = await _HomePageState._shareChannel.invokeMethod<Map<dynamic, dynamic>>(
-        'getSharedUris',
-      );
+      final result = await _HomePageState._shareChannel
+          .invokeMethod<Map<dynamic, dynamic>>('getSharedUris');
       if (result == null) return;
       final overLimitCount = result['overLimitCount'] as int? ?? 0;
       if (overLimitCount > 0) {
@@ -48,8 +49,11 @@ extension _HomeDataActions on _HomePageState {
         return;
       }
       final successes = result['successes'] as List<dynamic>? ?? <dynamic>[];
-      final paths = successes.map((e) => (e as Map<dynamic, dynamic>)['path'] as String).toList();
-      final failureCount = ((result['failures'] as List<dynamic>?)?.length ?? 0);
+      final paths = successes
+          .map((e) => (e as Map<dynamic, dynamic>)['path'] as String)
+          .toList();
+      final failureCount =
+          ((result['failures'] as List<dynamic>?)?.length ?? 0);
       if (paths.isEmpty) {
         if (failureCount > 0) _showMessage('$failureCount件の取り込みに失敗しました');
         return;
@@ -74,8 +78,11 @@ extension _HomeDataActions on _HomePageState {
         return null;
       }
       final successes = arguments['successes'] as List<dynamic>? ?? <dynamic>[];
-      final paths = successes.map((e) => (e as Map<dynamic, dynamic>)['path'] as String).toList();
-      final failureCount = ((arguments['failures'] as List<dynamic>?)?.length ?? 0);
+      final paths = successes
+          .map((e) => (e as Map<dynamic, dynamic>)['path'] as String)
+          .toList();
+      final failureCount =
+          ((arguments['failures'] as List<dynamic>?)?.length ?? 0);
       if (paths.isEmpty) {
         if (failureCount > 0) _showMessage('$failureCount件の取り込みに失敗しました');
         return null;
@@ -85,28 +92,19 @@ extension _HomeDataActions on _HomePageState {
     return null;
   }
 
-  Future<T> _enqueueMutation<T>(Future<T> Function() action) {
-    final completer = Completer<T>();
-    _mutationQueue = _mutationQueue.then((_) async {
-      try {
-        completer.complete(await action());
-      } catch (error, stackTrace) {
-        completer.completeError(error, stackTrace);
-      }
-    });
-    return completer.future;
-  }
-
   Future<void> _commitData(AppData next) async {
     await _store.save(next);
     if (!mounted) return;
     _updateState(() => _data = next);
   }
 
-  Future<void> _importSharedUris(List<String> uris, {int failureCount = 0}) async {
+  Future<void> _importSharedUris(
+    List<String> uris, {
+    int failureCount = 0,
+  }) async {
     if (uris.isEmpty || _loadError != null) return;
     try {
-      await _enqueueMutation(() async {
+      await _coordinator.runMutation(() async {
         final uniqueUris = uris.toSet().toList(growable: false);
         final available = _HomePageState._maxPhotos - _data.photoCount;
         if (available <= 0 || uniqueUris.length > available) {
@@ -131,10 +129,7 @@ extension _HomeDataActions on _HomePageState {
           );
         } else {
           next = _data.copyWith(
-            unassignedPhotos: <File>[
-              ..._data.unassignedPhotos,
-              ...copied,
-            ],
+            unassignedPhotos: <File>[..._data.unassignedPhotos, ...copied],
           );
         }
 
@@ -200,12 +195,10 @@ extension _HomeDataActions on _HomePageState {
     if (selected.isEmpty || !mounted) return;
 
     try {
-      await _enqueueMutation(() async {
+      await _coordinator.runMutation(() async {
         final available = _HomePageState._maxPhotos - _data.photoCount;
         if (selected.length > available) {
-          _showMessage(
-            '追加できるのは残り$available枚です。枚数を減らして選び直してください',
-          );
+          _showMessage('追加できるのは残り$available枚です。枚数を減らして選び直してください');
           return;
         }
         if (tripId == null && _data.trips.length >= _HomePageState._maxTrips) {
@@ -247,10 +240,7 @@ extension _HomeDataActions on _HomePageState {
     try {
       for (var index = 0; index < selected.length; index++) {
         final image = selected[index];
-        final safeName = image.name.replaceAll(
-          RegExp(r'[^a-zA-Z0-9._-]'),
-          '_',
-        );
+        final safeName = image.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
         final destination = File(
           '${photosDirectory.path}/${createEntityId('photo')}-${index.toString().padLeft(3, '0')}-$safeName',
         );
@@ -276,7 +266,8 @@ extension _HomeDataActions on _HomePageState {
 
     final confirmed = await _confirm(
       title: '写真も削除',
-      message: '「${trip.title}」と写真${trip.photos.length}枚を端末から削除します。この操作は元に戻せません。',
+      message:
+          '「${trip.title}」と写真${trip.photos.length}枚を端末から削除します。この操作は元に戻せません。',
       confirmLabel: '削除する',
       destructive: true,
     );
@@ -285,7 +276,7 @@ extension _HomeDataActions on _HomePageState {
 
   Future<void> _moveTripToUnassigned(String tripId) async {
     try {
-      await _enqueueMutation(() async {
+      await _coordinator.runMutation(() async {
         await _commitData(moveTripToUnassigned(_data, tripId));
         _showMessage('写真を旅行未設定へ移動しました');
       });
@@ -296,7 +287,7 @@ extension _HomeDataActions on _HomePageState {
 
   Future<void> _deleteTripAndPhotos(String tripId) async {
     try {
-      await _enqueueMutation(() async {
+      await _coordinator.runMutation(() async {
         final trip = _data.trips.where((item) => item.id == tripId).firstOrNull;
         if (trip == null) throw StateError('削除する旅行が見つかりません');
         await _commitData(removeTrip(_data, tripId));
@@ -318,7 +309,7 @@ extension _HomeDataActions on _HomePageState {
       return;
     }
     try {
-      await _enqueueMutation(() async {
+      await _coordinator.runMutation(() async {
         final trip = Trip(
           id: createEntityId('trip'),
           title: '新しいおでかけ ${_data.trips.length + 1}',
@@ -337,10 +328,10 @@ extension _HomeDataActions on _HomePageState {
     final nextState = currentState == 'unvisited'
         ? 'visited'
         : currentState == 'visited'
-            ? 'transit'
-            : 'unvisited';
+        ? 'transit'
+        : 'unvisited';
     try {
-      await _enqueueMutation(() async {
+      await _coordinator.runMutation(() async {
         await _commitData(updatePrefectureState(_data, name, nextState));
       });
     } catch (error) {
