@@ -21,10 +21,23 @@ extension _HomeDataActions on _HomePageState {
 
   Future<void> _consumeInitialSharedUris() async {
     try {
-      final uris = await _HomePageState._shareChannel.invokeMethod<List<dynamic>>(
+      final result = await _HomePageState._shareChannel.invokeMethod<Map<dynamic, dynamic>>(
         'getSharedUris',
       );
-      if (uris != null) await _importSharedUris(uris.cast<String>());
+      if (result == null) return;
+      final overLimitCount = result['overLimitCount'] as int? ?? 0;
+      if (overLimitCount > 0) {
+        _showMessage('300枚の上限を超えています。上限内の枚数を選び直してから取り込んでください');
+        return;
+      }
+      final successes = result['successes'] as List<dynamic>? ?? <dynamic>[];
+      final paths = successes.map((e) => (e as Map<dynamic, dynamic>)['path'] as String).toList();
+      final failureCount = ((result['failures'] as List<dynamic>?)?.length ?? 0);
+      if (paths.isEmpty) {
+        if (failureCount > 0) _showMessage('$failureCount件の取り込みに失敗しました');
+        return;
+      }
+      await _importSharedUris(paths, failureCount: failureCount);
     } on MissingPluginException {
       // Widget tests and unsupported platforms do not provide the Android channel.
     } on PlatformException catch (error) {
@@ -37,8 +50,20 @@ extension _HomeDataActions on _HomePageState {
     await _initialization;
     if (_loadError != null) return null;
     final arguments = call.arguments;
-    if (arguments is List) {
-      await _importSharedUris(arguments.cast<String>());
+    if (arguments is Map) {
+      final overLimitCount = arguments['overLimitCount'] as int? ?? 0;
+      if (overLimitCount > 0) {
+        _showMessage('300枚の上限を超えています。上限内の枚数を選び直してから取り込んでください');
+        return null;
+      }
+      final successes = arguments['successes'] as List<dynamic>? ?? <dynamic>[];
+      final paths = successes.map((e) => (e as Map<dynamic, dynamic>)['path'] as String).toList();
+      final failureCount = ((arguments['failures'] as List<dynamic>?)?.length ?? 0);
+      if (paths.isEmpty) {
+        if (failureCount > 0) _showMessage('$failureCount件の取り込みに失敗しました');
+        return null;
+      }
+      await _importSharedUris(paths, failureCount: failureCount);
     }
     return null;
   }
@@ -61,7 +86,7 @@ extension _HomeDataActions on _HomePageState {
     _updateState(() => _data = next);
   }
 
-  Future<void> _importSharedUris(List<String> uris) async {
+  Future<void> _importSharedUris(List<String> uris, {int failureCount = 0}) async {
     if (uris.isEmpty || _loadError != null) return;
     try {
       await _enqueueMutation(() async {
@@ -102,11 +127,13 @@ extension _HomeDataActions on _HomePageState {
           await _deleteFiles(copied);
           rethrow;
         }
-        _showMessage(
-          createsTrip
-              ? '${copied.length}枚を共有から取り込みました'
-              : '${copied.length}枚を旅行未設定へ取り込みました',
-        );
+        var message = createsTrip
+            ? '${copied.length}枚を共有から取り込みました'
+            : '${copied.length}枚を旅行未設定へ取り込みました';
+        if (failureCount > 0) {
+          message += '（$failureCount件失敗）';
+        }
+        _showMessage(message);
       });
     } catch (error) {
       _showError('共有写真の取り込み', error);
