@@ -49,10 +49,11 @@ void main() {
     expect(coordinator.isBusy, isTrue);
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(
-      tester.widget<IconButton>(find.byTooltip('写真を追加')).onPressed,
-      isNull,
+    final addPhotoButton = find.ancestor(
+      of: find.byTooltip('写真を追加').first,
+      matching: find.byType(IconButton),
     );
+    expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNull);
     expect(
       tester
           .widget<ActionChip>(find.widgetWithText(ActionChip, '北海道'))
@@ -64,9 +65,6 @@ void main() {
     await mutation;
     await tester.pump();
 
-    expect(
-      tester.widget<IconButton>(find.byTooltip('写真を追加')).onPressed,
-      isNotNull,
-    );
+    expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNotNull);
   });
 }
