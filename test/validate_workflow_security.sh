@@ -126,8 +126,8 @@ assert_section_contains "$release_section" "Cleanup signing secrets" \
   "cleanup step exists"
 assert_section_contains "$release_section" "if: always()" \
   "cleanup runs on failure paths"
-assert_section_contains "$release_section" "continue-on-error: true" \
-  "cleanup failure cannot block cleanup flow"
+assert_section_not_contains "$release_section" "continue-on-error:" \
+  "cleanup failure blocks publish"
 assert_section_contains "$release_section" "rm -f android/app/release-keystore.jks" \
   "cleanup removes keystore"
 assert_section_contains "$release_section" "rm -f android/key.properties" \

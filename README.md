@@ -89,7 +89,7 @@ git push origin v1.2.0
 - `release` ジョブは `if:` 条件により、`workflow_dispatch` では `refs/heads/main`、`push`（タグ）では `refs/tags/v*` の場合のみ実行されます
 - 署名 Secrets は `validate` ジョブには渡されません。`release` ジョブでのみ使用され、第三者Action実行前に削除されます
 - `validate` ジョブは `contents: read` 権限のみで実行され、Release 作成は `release` ジョブ（`contents: write`）に分離されています
-- ビルドと署名の後、第三者Action（`softprops/action-gh-release`）の実行**前**に署名ファイル（keystore, key.properties）を削除します。`if: always()` により失敗経路でも削除が実行され、`continue-on-error: true` により cleanup の失敗が公開を妨げません
+- ビルドと署名の後、第三者Action（`softprops/action-gh-release`）の実行**前**に署名ファイル（keystore, key.properties）を削除します。`if: always()` により失敗経路でも削除が実行され、cleanup が失敗した場合は Publish を中止します
 - release workflow で使用する Action は可変タグではなく、完全 commit SHA に固定します
 - 同一バージョンの重複リリースを防ぐため、`concurrency` により直列化されます
 - イベント入力（version, tag名）は `env:` 経由で受け渡し、shell 内で直接展開しません。`scripts/validate-release.sh` の semver 検証により shell injection を防止します
@@ -150,7 +150,7 @@ GitHub Actions の仕様上、タグ push で起動した workflow は、その�
 - 再実行（Re-run）は同じ versionCode を生成するため、既存の Release を上書きしません
 - タグ push ではタグが指す `main` 履歴上の commit、手動リリースでは `main` の先端がビルド対象となり、ログと成果物ファイル名に commit SHA が含まれます
 - 署名キーストアと key.properties は第三者Action（Release公開）の**前に自動削除**されます
-- cleanup は失敗経路でも実行されます（`if: always()`）
+- cleanup は失敗経路でも実行されます（`if: always()`）。cleanup 自体が失敗した場合は Release 公開を中止します
 - エラー時は validate ジョブのログを確認してください。署名シークレット関連のエラーは fail-fast で停止します
 - Environment 設定が未完了の場合、タグ push 経路での署名 Secrets 保護は不完全です。リリース前に「セキュリティ」セクションの手動設定を完了してください
 

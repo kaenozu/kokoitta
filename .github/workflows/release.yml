@@ -196,7 +196,6 @@ jobs:
 
       - name: Cleanup signing secrets
         if: always()
-        continue-on-error: true
         run: |
           rm -f android/app/release-keystore.jks
           rm -f android/key.properties
