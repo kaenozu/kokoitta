@@ -412,10 +412,9 @@ void main() {
       await Directory('${stagingDir.path}/0').create();
       await Directory('${stagingDir.path}/1').create();
 
-      var callIndex = 0;
-      Future<void> failSecondDeleteDir(Directory dir) async {
-        callIndex++;
-        if (callIndex == 2) {
+      Future<void> failDeleteDirOne(Directory dir) async {
+        final dirName = dir.path.split(RegExp(r'[/\\]')).last;
+        if (dirName == '1') {
           throw FileSystemException('Simulated failure', dir.path);
         }
         await dir.delete(recursive: true);
@@ -423,7 +422,7 @@ void main() {
 
       await StorageCleanup.run(
         documentsDirectory: tempDir,
-        onDeleteDirectory: failSecondDeleteDir,
+        onDeleteDirectory: failDeleteDirOne,
       );
 
       expect(await Directory('${stagingDir.path}/0').exists(), isFalse);
