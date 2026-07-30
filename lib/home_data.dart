@@ -78,6 +78,10 @@ extension _HomeDataActions on _HomePageState {
       return null;
     }
     if (call.method != 'sharedUris') return null;
+    _updateState(() {
+      _importCompleted = null;
+      _importTotal = null;
+    });
     await _initialization;
     if (_loadError != null) return null;
     final arguments = call.arguments;
