@@ -99,6 +99,6 @@ class PendingDeletionStore {
   }
 }
 
-extension<T> on Iterable<T> {
+extension PendingFirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
