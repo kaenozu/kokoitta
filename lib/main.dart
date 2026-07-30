@@ -14,6 +14,7 @@ import 'operation_coordinator.dart';
 import 'storage_cleanup.dart';
 import 'trip_store.dart';
 import 'validators.dart';
+import 'offline_japan_map.dart';
 
 part 'home_data.dart';
 part 'home_view.dart';
