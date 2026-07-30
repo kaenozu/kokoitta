@@ -1,6 +1,22 @@
 part of 'main.dart';
 
 extension _HomeDataActions on _HomePageState {
+  Future<void> _runStartupCleanup() async {
+    try {
+      await StorageCleanup.run(appData: _data);
+    } catch (_) {
+      // Cleanup failures must not block application startup.
+    }
+  }
+
+  void _scheduleStartupCleanup() {
+    if (_isCleanupRunning) return;
+    _isCleanupRunning = true;
+    unawaited(_runStartupCleanup().whenComplete(() {
+      _isCleanupRunning = false;
+    }));
+  }
+
   Future<void> _initialize() async {
     try {
       final loaded = await _store.load();
@@ -9,6 +25,7 @@ extension _HomeDataActions on _HomePageState {
         _data = loaded;
         _isLoading = false;
       });
+      _scheduleStartupCleanup();
       await _consumeInitialSharedUris();
     } catch (error) {
       if (!mounted) return;
