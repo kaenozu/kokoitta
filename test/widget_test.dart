@@ -1,6 +1,10 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/main.dart';
+import 'package:kokoitta_app/operation_coordinator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -31,5 +35,53 @@ void main() {
     expect(find.text('地図'), findsOneWidget);
     expect(find.text('旅行'), findsOneWidget);
     expect(find.text('写真を追加'), findsOneWidget);
+  });
+
+  testWidgets('busy中はデータ変更操作とバックアップメニューを無効化する', (tester) async {
+    final coordinator = OperationCoordinator();
+    await tester.pumpWidget(
+      MaterialApp(home: HomePage(operationCoordinator: coordinator)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('設定').first);
+    await tester.pumpAndSettle();
+
+    final hold = Completer<void>();
+    final mutation = coordinator.runMutation(() => hold.future);
+    await tester.pump();
+
+    final backupTile = tester.widget<ListTile>(
+      find.widgetWithText(ListTile, '完全バックアップを作成'),
+    );
+    final restoreTile = tester.widget<ListTile>(
+      find.widgetWithText(ListTile, '完全復元'),
+    );
+    expect(backupTile.enabled, isFalse);
+    expect(restoreTile.enabled, isFalse);
+
+    Navigator.of(
+      tester.element(find.text('データ保護')),
+    ).pop();
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<IconButton>(find.byTooltip('写真を追加')).onPressed,
+      isNull,
+    );
+    expect(
+      tester.widget<ActionChip>(find.widgetWithText(ActionChip, '北海道'))
+          .onPressed,
+      isNull,
+    );
+
+    hold.complete();
+    await mutation;
+    await tester.pump();
+
+    expect(
+      tester.widget<IconButton>(find.byTooltip('写真を追加')).onPressed,
+      isNotNull,
+    );
   });
 }

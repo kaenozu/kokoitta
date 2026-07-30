@@ -13,14 +13,18 @@ class OperationCoordinator {
   final _statusController = StreamController<OperationStatus>.broadcast();
   Future<void> _queue = Future<void>.value();
   OperationStatus _status = OperationStatus.idle;
+  int _pendingMutationCount = 0;
   bool _hasBackupQueued = false;
   bool _hasRestoreSession = false;
+  bool _hasRestoreCommitQueued = false;
   bool _isDisposed = false;
 
   OperationStatus get status => _status;
   Stream<OperationStatus> get statusStream => _statusController.stream;
 
   bool get isBusy =>
+      _pendingMutationCount > 0 ||
+      _hasBackupQueued ||
       _status == OperationStatus.mutating ||
       _status == OperationStatus.backup ||
       _status == OperationStatus.restorePrepare ||
@@ -37,7 +41,14 @@ class OperationCoordinator {
     if (_hasRestoreSession) {
       throw StateError('Cannot mutate during restore session');
     }
-    return _enqueue(OperationStatus.mutating, action);
+    _pendingMutationCount += 1;
+    return _enqueue(
+      OperationStatus.mutating,
+      action,
+      onFinally: () {
+        _pendingMutationCount -= 1;
+      },
+    );
   }
 
   Future<T> runBackup<T>(Future<T> Function() action) {
@@ -63,11 +74,6 @@ class OperationCoordinator {
     if (isBusy) {
       throw StateError('Cannot begin restore preparation while busy');
     }
-    if (_hasBackupQueued) {
-      throw StateError(
-        'Cannot begin restore preparation while operation queued',
-      );
-    }
     if (_hasRestoreSession) {
       throw StateError('Restore session already in progress');
     }
@@ -88,13 +94,26 @@ class OperationCoordinator {
     if (_status != OperationStatus.restoreConfirm) {
       throw StateError('Must be in restoreConfirm state to commit');
     }
-    return _enqueue(OperationStatus.mutating, action);
+    if (_hasRestoreCommitQueued) {
+      throw StateError('Restore commit already queued');
+    }
+    _hasRestoreCommitQueued = true;
+    return _enqueue(
+      OperationStatus.mutating,
+      action,
+      onFinally: () {
+        _hasRestoreCommitQueued = false;
+      },
+    );
   }
 
   void endRestore() {
     _ensureNotDisposed();
     if (!_hasRestoreSession) {
       throw StateError('No restore session in progress');
+    }
+    if (_hasRestoreCommitQueued) {
+      throw StateError('Cannot end restore while commit is queued or running');
     }
     _hasRestoreSession = false;
     _updateStatus(OperationStatus.idle);
@@ -147,8 +166,10 @@ class OperationCoordinator {
 
   void dispose() {
     _isDisposed = true;
-    _hasRestoreSession = false;
+    _pendingMutationCount = 0;
     _hasBackupQueued = false;
+    _hasRestoreSession = false;
+    _hasRestoreCommitQueued = false;
     _statusController.close();
   }
 }

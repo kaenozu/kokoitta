@@ -107,7 +107,7 @@ extension _HomeView on _HomePageState {
               ],
             ),
             IconButton(
-              onPressed: _showBackupMenu,
+              onPressed: _isDisabled ? null : _showBackupMenu,
               icon: const Icon(Icons.tune),
               tooltip: '設定',
             ),
@@ -180,7 +180,9 @@ extension _HomeView on _HomePageState {
                         : Icons.circle_outlined,
                     size: 16,
                   ),
-                  onPressed: () => _updatePrefecture(name, state),
+                  onPressed: _isDisabled
+                      ? null
+                      : () => _updatePrefecture(name, state),
                 );
               }).toList(),
             ),
@@ -357,6 +359,7 @@ extension _HomeView on _HomePageState {
                     ),
                   ),
                   PopupMenuButton<String>(
+                    enabled: !_isDisabled,
                     onSelected: (value) => _handleTripMenu(trip, value),
                     itemBuilder: (_) => const <PopupMenuEntry<String>>[
                       PopupMenuItem(value: 'move', child: Text('旅行未設定へ移動')),

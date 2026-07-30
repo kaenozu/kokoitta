@@ -120,6 +120,44 @@ void main() {
       coordinator.endRestore();
     });
 
+    test('same-tick runMutation then beginRestorePrepare rejected', () {
+      coordinator.runMutation(() async {});
+      expect(() => coordinator.beginRestorePrepare(), throwsStateError);
+    });
+
+    test('queued mutation before execution blocks restore', () async {
+      final hold = Completer<void>();
+      coordinator.runMutation(() async {
+        await hold.future;
+      });
+      expect(() => coordinator.beginRestorePrepare(), throwsStateError);
+      hold.complete();
+      await Future<void>.delayed(Duration.zero);
+    });
+
+    test('mutation completion allows restore start', () async {
+      await coordinator.runMutation(() async {});
+      coordinator.beginRestorePrepare();
+      coordinator.endRestore();
+      expect(coordinator.status, OperationStatus.idle);
+    });
+
+    test('all queued mutations block restore until the last completes', () async {
+      final firstHold = Completer<void>();
+      final secondHold = Completer<void>();
+      final first = coordinator.runMutation(() => firstHold.future);
+      final second = coordinator.runMutation(() => secondHold.future);
+
+      firstHold.complete();
+      await first;
+      expect(() => coordinator.beginRestorePrepare(), throwsStateError);
+
+      secondHold.complete();
+      await second;
+      coordinator.beginRestorePrepare();
+      coordinator.endRestore();
+    });
+
     test('restore lifecycle: prepare to confirm to commit to end', () async {
       coordinator.beginRestorePrepare();
       expect(coordinator.status, OperationStatus.restorePrepare);
@@ -168,6 +206,44 @@ void main() {
 
     test('endRestore rejects with no session', () {
       expect(() => coordinator.endRestore(), throwsStateError);
+    });
+
+    test('same-tick double runRestoreCommit rejects second', () {
+      coordinator.beginRestorePrepare();
+      coordinator.enterRestoreConfirm();
+      coordinator.runRestoreCommit(() async {});
+      expect(() => coordinator.runRestoreCommit(() async {}), throwsStateError);
+    });
+
+    test('endRestore rejected while commit queued', () {
+      coordinator.beginRestorePrepare();
+      coordinator.enterRestoreConfirm();
+      coordinator.runRestoreCommit(() async {});
+      expect(() => coordinator.endRestore(), throwsStateError);
+    });
+
+    test('endRestore rejected while commit running', () async {
+      coordinator.beginRestorePrepare();
+      coordinator.enterRestoreConfirm();
+      final hold = Completer<void>();
+      coordinator.runRestoreCommit(() async {
+        await hold.future;
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(() => coordinator.endRestore(), throwsStateError);
+      hold.complete();
+    });
+
+    test('commit failure allows safe session end', () async {
+      coordinator.beginRestorePrepare();
+      coordinator.enterRestoreConfirm();
+      try {
+        await coordinator.runRestoreCommit(() async {
+          throw StateError('commit failed');
+        });
+      } catch (_) {}
+      coordinator.endRestore();
+      expect(coordinator.status, OperationStatus.idle);
     });
 
     test('error in runMutation transitions to failed state', () async {
@@ -275,6 +351,18 @@ void main() {
     );
 
     test(
+      'backup return value is available immediately queue is free',
+      () async {
+        final coordinator = OperationCoordinator();
+        final backupFile = await coordinator.runBackup(() async => 'file.zip');
+        expect(backupFile, 'file.zip');
+        expect(coordinator.status, OperationStatus.idle);
+        expect(coordinator.isBusy, isFalse);
+        coordinator.dispose();
+      },
+    );
+
+    test(
       'backup snapshot is not affected by mutation submitted during backup',
       () async {
         final coordinator = OperationCoordinator();
@@ -301,25 +389,27 @@ void main() {
       },
     );
 
-    test('mutation and restore commit are serialized', () async {
+    test('mutation queued blocks restore start', () async {
+      final coordinator = OperationCoordinator();
+      final mutation = coordinator.runMutation(() async {});
+      expect(() => coordinator.beginRestorePrepare(), throwsStateError);
+      await mutation;
+      coordinator.dispose();
+    });
+
+    test('mutation complete then restore commit are serialized', () async {
       final coordinator = OperationCoordinator();
       final order = <String>[];
-      final mutationHold = Completer<void>();
 
-      final mutation = coordinator.runMutation(() async {
-        await mutationHold.future;
+      await coordinator.runMutation(() async {
         order.add('mutation');
       });
 
       coordinator.beginRestorePrepare();
       coordinator.enterRestoreConfirm();
-      final commit = coordinator.runRestoreCommit(() async {
+      await coordinator.runRestoreCommit(() async {
         order.add('restore');
       });
-
-      mutationHold.complete();
-      await mutation;
-      await commit;
       coordinator.endRestore();
 
       expect(order, ['mutation', 'restore']);
@@ -392,5 +482,30 @@ void main() {
         await expectLater(mutation, throwsA(isA<StateError>()));
       },
     );
+
+    test(
+      'dispose with queued backup does not hang or add to closed stream',
+      () async {
+        final coordinator = OperationCoordinator();
+        final hold = Completer<void>();
+        final mutation1 = coordinator.runMutation(() async {
+          await hold.future;
+        });
+        final backup = coordinator.runBackup(() async {});
+        coordinator.dispose();
+        hold.complete();
+        await expectLater(mutation1, throwsA(isA<StateError>()));
+        await expectLater(backup, throwsA(isA<StateError>()));
+      },
+    );
+
+    test('dispose with queued restore commit does not hang', () async {
+      final coordinator = OperationCoordinator();
+      coordinator.beginRestorePrepare();
+      coordinator.enterRestoreConfirm();
+      final commit = coordinator.runRestoreCommit(() async {});
+      coordinator.dispose();
+      await expectLater(commit, throwsA(isA<StateError>()));
+    });
   });
 }

@@ -3,68 +3,77 @@ part of 'main.dart';
 extension _HomeBackupActions on _HomePageState {
   Future<void> _showBackupMenu() async {
     if (!mounted) return;
-    final isAnyBusy = _coordinator.isBusy;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'データ保護',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
+      builder: (sheetContext) => StreamBuilder<OperationStatus>(
+        stream: _coordinator.statusStream,
+        initialData: _coordinator.status,
+        builder: (context, _) {
+          final isAnyBusy = _coordinator.isBusy;
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'データ保護',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ListTile(
+                    enabled: _loadError == null && !isAnyBusy,
+                    leading: const Icon(Icons.backup_outlined),
+                    title: const Text('完全バックアップを作成'),
+                    subtitle: _coordinator.isBackingUp
+                        ? const Text('バックアップ作成中…')
+                        : const Text('旅行・旅行未設定・地図状態・写真をZIPに保存'),
+                    onTap: isAnyBusy
+                        ? null
+                        : () {
+                            Navigator.pop(sheetContext);
+                            _createBackup();
+                          },
+                  ),
+                  ListTile(
+                    enabled: !isAnyBusy,
+                    leading: const Icon(Icons.restore),
+                    title: const Text('完全復元'),
+                    subtitle: _coordinator.isRestoring
+                        ? const Text('復元処理中…')
+                        : const Text('検証後、現在のデータを安全に置き換え'),
+                    onTap: isAnyBusy
+                        ? null
+                        : () {
+                            Navigator.pop(sheetContext);
+                            _restoreBackup();
+                          },
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              ListTile(
-                enabled: _loadError == null && !_coordinator.isBackingUp,
-                leading: const Icon(Icons.backup_outlined),
-                title: const Text('完全バックアップを作成'),
-                subtitle: _coordinator.isBackingUp
-                    ? const Text('バックアップ作成中…')
-                    : const Text('旅行・旅行未設定・地図状態・写真をZIPに保存'),
-                onTap: isAnyBusy
-                    ? null
-                    : () {
-                        Navigator.pop(sheetContext);
-                        _createBackup();
-                      },
-              ),
-              ListTile(
-                enabled: !_coordinator.isRestoring,
-                leading: const Icon(Icons.restore),
-                title: const Text('完全復元'),
-                subtitle: _coordinator.isRestoring
-                    ? const Text('復元処理中…')
-                    : const Text('検証後、現在のデータを安全に置き換え'),
-                onTap: isAnyBusy
-                    ? null
-                    : () {
-                        Navigator.pop(sheetContext);
-                        _restoreBackup();
-                      },
-              ),
-            ],
+            ),
           ),
-        ),
+        },
       ),
     );
   }
 
   Future<void> _createBackup() async {
     try {
-      await _coordinator.runBackup(() async {
-        final file = await _backupService.createBackup(_data);
-        if (mounted) {
-          await _backupService.shareBackup(file);
-          _showMessage('バックアップを共有しました。端末内には最新5件まで保持されます。');
-        }
-      });
+      final file = await _coordinator.runBackup(
+        () => _backupService.createBackup(_data),
+      );
+      if (mounted) {
+        await _backupService.shareBackup(file);
+        _showMessage('バックアップを共有しました。端末内には最新5件まで保持されます。');
+      }
     } catch (error) {
       if (!mounted) return;
       _showError('バックアップ作成', error);
