@@ -27,13 +27,53 @@ flutter build apk --debug
 - 完全復元は ZIP の形式・件数・容量・SHA-256を検証して一時領域へ展開します。
 - 復元確定前に現在データの安全バックアップを作成し、保存状態の切替に失敗した場合は新しい写真セットをロールバックします。
 
-## Androidリリース署名
+## Androidリリース
 
-GitHub Actions のリリースには次の Secrets が必要です。
+### トリガー
+
+| 方法 | 条件 | バージョン指定 |
+|---|---|---|
+| タグ push | `vX.Y.Z` 形式のタグ（例: `v1.2.0`） | タグ名から自動抽出 |
+| 手動 (workflow_dispatch) | GitHub Actions の Release 画面から実行 | `version` + `ref` を必須入力 |
+
+### 必要 Secrets
+
+署名済み APK/AAB のビルドには以下の Secrets が必要です。
 
 - `ANDROID_KEYSTORE_BASE64`
 - `ANDROID_STORE_PASSWORD`
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-タグ `v*.*.*` の push、または手動実行で署名済み APK を作成します。署名情報が不足している場合、ワークフローはリリース前に失敗します。
+Secrets が不足している場合、ワークフローはビルド前に失敗します。
+
+### バージョニング
+
+- **versionName**: タグ `v1.2.3` → `1.2.3`。手動実行の場合は入力 `version` をそのまま使用
+- **versionCode**: リリースワークフロー内で単調増加する `run_number` を使用。同じ run の再実行は同じ versionCode を生成する（上書き防止）
+- 不正なタグ形式（`v1.2`、`1.2.3`、`v1.2.3-beta` など）は検証ステップでビルド前に失敗します
+
+### リリース手順（タグ push）
+
+```bash
+# 1. pubspec.yaml の version を更新（必要に応じて）
+# 2. タグを作成して push
+git tag v1.2.0
+git push origin v1.2.0
+# 3. GitHub Actions が自動起動し、APK + AAB を GitHub Release へ添付
+```
+
+### リリース手順（手動実行）
+
+1. GitHub リポジトリ → Actions → Android Release → Run workflow
+2. 入力:
+   - **version**: `1.2.0`（`v` なしの semver）
+   - **ref**: `main`（ブランチ名、タグ名、または commit SHA）
+3. ワークフローが指定 ref をチェックアウトし、ビルド・署名・Release 作成を実行
+
+### 注意事項
+
+- 同一バージョンの Release が既に存在する場合、ワークフローは早期に失敗します
+- 再実行（Re-run）は同じ versionCode を生成するため、既存の Release を上書きしません
+- 手動実行時に指定した `ref` の commit SHA はログと成果物ファイル名に含まれ、追跡可能です
+- エラー時は validate ジョブのログを確認してください。署名シークレット関連のエラーは fail-fast で停止します
