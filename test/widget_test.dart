@@ -99,6 +99,12 @@ void main() {
     );
     expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNull);
 
+    final hokkaidoTapTarget = find.descendant(
+      of: find.byKey(const ValueKey<String>('prefecture-map-01')),
+      matching: find.byType(InkWell),
+    );
+    expect(tester.widget<InkWell>(hokkaidoTapTarget).onTap, isNull);
+
     hold.complete();
     await mutation;
     await tester.pump();
@@ -111,5 +117,6 @@ void main() {
       tester.widget<IconButton>(reenabledAddPhotoButton).onPressed,
       isNotNull,
     );
+    expect(tester.widget<InkWell>(hokkaidoTapTarget).onTap, isNotNull);
   });
 }
