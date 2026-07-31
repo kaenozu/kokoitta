@@ -16,7 +16,7 @@ class PrefectureMapActions extends InheritedWidget {
     required super.child,
   });
 
-  final PrefectureStateTapHandler onTap;
+  final PrefectureStateTapHandler? onTap;
 
   static PrefectureMapActions? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<PrefectureMapActions>();
