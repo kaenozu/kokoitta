@@ -416,12 +416,22 @@ extension _HomeView on _HomePageState {
     if (photos.isEmpty) {
       return const Center(child: Icon(Icons.landscape, size: 48));
     }
-    return Image.file(
-      photos.first,
-      width: double.infinity,
-      fit: BoxFit.cover,
-      errorBuilder: (_, _, _) =>
-          const Center(child: Icon(Icons.broken_image_outlined, size: 48)),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final dimension = thumbnailDecodeDimension(
+          logicalWidth: constraints.maxWidth,
+          logicalHeight: constraints.maxHeight,
+          devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+        );
+        return Image.file(
+          photos.first,
+          width: double.infinity,
+          fit: BoxFit.cover,
+          cacheWidth: dimension,
+          errorBuilder: (_, _, _) =>
+              const Center(child: Icon(Icons.broken_image_outlined, size: 48)),
+        );
+      },
     );
   }
 
@@ -510,18 +520,28 @@ extension _HomeView on _HomePageState {
         mainAxisSpacing: 4,
       ),
       itemCount: photos.length,
-      itemBuilder: (_, index) => Semantics(
+      itemBuilder: (context, index) => Semantics(
         button: true,
         label: '写真 ${index + 1} / ${photos.length} を拡大表示',
         child: GestureDetector(
           onTap: () => _showPhotoViewer(photos, index),
-          child: Image.file(
-            photos[index],
-            fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => const ColoredBox(
-              color: Color(0xffeeeeee),
-              child: Icon(Icons.broken_image_outlined),
-            ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final dimension = thumbnailDecodeDimension(
+                logicalWidth: constraints.maxWidth,
+                logicalHeight: constraints.maxHeight,
+                devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+              );
+              return Image.file(
+                photos[index],
+                fit: BoxFit.cover,
+                cacheWidth: dimension,
+                errorBuilder: (_, _, _) => const ColoredBox(
+                  color: Color(0xffeeeeee),
+                  child: Icon(Icons.broken_image_outlined),
+                ),
+              );
+            },
           ),
         ),
       ),
