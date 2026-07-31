@@ -85,6 +85,49 @@ void main() {
     expect(find.text('地図'), findsOneWidget);
     expect(find.text('旅行'), findsOneWidget);
     expect(find.text('写真を追加'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('prefecture-map-01')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('prefecture-map-47')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('地図タップで状態を保存し再起動後も維持する', (tester) async {
+    const hokkaidoKey = ValueKey<String>('prefecture-map-01');
+
+    await tester.pumpWidget(const KokoittaApp());
+    await tester.pumpAndSettle();
+
+    final hokkaido = find.byKey(hokkaidoKey);
+    final hokkaidoTapTarget = find.descendant(
+      of: hokkaido,
+      matching: find.byType(InkWell),
+    );
+    await tester.ensureVisible(hokkaidoTapTarget);
+    await tester.pumpAndSettle();
+    await tester.tap(hokkaidoTapTarget);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.bySemanticsLabel(RegExp('北海道、訪問済み')),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(const KokoittaApp());
+    await tester.pumpAndSettle();
+
+    final restoredHokkaido = find.byKey(hokkaidoKey);
+    await tester.ensureVisible(restoredHokkaido);
+    await tester.pumpAndSettle();
+    expect(
+      find.bySemanticsLabel(RegExp('北海道、訪問済み')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('busy中はデータ変更操作とバックアップメニューを無効化する', (tester) async {
@@ -105,7 +148,12 @@ void main() {
       matching: find.byType(IconButton),
     );
     expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNull);
-    expect(find.text('都道府県マップ'), findsOneWidget);
+
+    final hokkaidoTapTarget = find.descendant(
+      of: find.byKey(const ValueKey<String>('prefecture-map-01')),
+      matching: find.byType(InkWell),
+    );
+    expect(tester.widget<InkWell>(hokkaidoTapTarget).onTap, isNull);
 
     hold.complete();
     await mutation;
@@ -119,6 +167,7 @@ void main() {
       tester.widget<IconButton>(reenabledAddPhotoButton).onPressed,
       isNotNull,
     );
+    expect(tester.widget<InkWell>(hokkaidoTapTarget).onTap, isNotNull);
   });
 
   testWidgets('一覧カードのサムネイルは表示寸法とDPRからデコード幅が決まる', (tester) async {

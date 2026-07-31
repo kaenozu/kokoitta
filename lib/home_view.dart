@@ -192,6 +192,13 @@ extension _HomeView on _HomePageState {
           ),
         ),
         const SizedBox(height: 28),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: OfflineJapanMap(states: _data.prefectureStates),
+          ),
+        ),
+        const SizedBox(height: 12),
         Text(
           '都道府県マップ',
           style: Theme.of(
