@@ -10,11 +10,11 @@ import 'package:share_plus/share_plus.dart';
 import 'app_data_operations.dart';
 import 'backup_service.dart';
 import 'models.dart';
+import 'offline_japan_map.dart';
 import 'operation_coordinator.dart';
 import 'storage_cleanup.dart';
 import 'trip_store.dart';
 import 'validators.dart';
-import 'offline_japan_map.dart';
 
 part 'home_data.dart';
 part 'home_view.dart';
@@ -149,5 +149,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   @override
-  Widget build(BuildContext context) => _buildPage(context);
+  Widget build(BuildContext context) {
+    return PrefectureMapActions(
+      onTap: _updatePrefecture,
+      child: _buildPage(context),
+    );
+  }
 }
