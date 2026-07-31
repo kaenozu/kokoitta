@@ -93,9 +93,14 @@ class KokoittaApp extends StatelessWidget {
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, this.operationCoordinator});
+  const HomePage({
+    super.key,
+    this.operationCoordinator,
+    this.pendingDeletionStore,
+  });
 
   final OperationCoordinator? operationCoordinator;
+  final PendingDeletionStore? pendingDeletionStore;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -114,6 +119,7 @@ class _HomePageState extends State<HomePage> {
   final List<String> _prefectures = validPrefectures.toList(growable: false);
 
   late final OperationCoordinator _coordinator;
+  late final PendingDeletionStore _pendingDeletionStore;
   AppData _data = AppData.empty();
   late final Future<void> _initialization;
   bool _isLoading = true;
@@ -130,6 +136,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _coordinator = widget.operationCoordinator ?? OperationCoordinator();
+    _pendingDeletionStore =
+        widget.pendingDeletionStore ?? PendingDeletionStore();
     _initialization = _initialize();
     _shareChannel.setMethodCallHandler(_handleShareMethod);
     _statusSub = _coordinator.statusStream.listen((_) {

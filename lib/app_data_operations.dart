@@ -3,8 +3,13 @@ import 'dart:io';
 import 'models.dart';
 import 'validators.dart';
 
-AppData addNewTrip(AppData data, Trip trip) {
-  return data.copyWith(trips: <Trip>[...data.trips, trip]);
+AppData addNewTrip(AppData data, Trip trip, {int atIndex = -1}) {
+  if (atIndex < 0 || atIndex > data.trips.length) {
+    return data.copyWith(trips: <Trip>[...data.trips, trip]);
+  }
+  final trips = <Trip>[...data.trips];
+  trips.insert(atIndex, trip);
+  return data.copyWith(trips: trips);
 }
 
 AppData addPhotosToTrip(AppData data, String tripId, List<File> photos) {

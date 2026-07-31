@@ -27,6 +27,7 @@ extension _HomeDataActions on _HomePageState {
         _data = loaded;
         _isLoading = false;
       });
+      await _recoverPendingDeletions();
       _scheduleStartupCleanup();
       await _consumeInitialSharedUris();
     } catch (error) {
@@ -35,6 +36,37 @@ extension _HomeDataActions on _HomePageState {
         _loadError = _readableError(error);
         _isLoading = false;
       });
+    }
+  }
+
+  /// 起動時に未確定・期限内のpending deletionを回収する。
+  ///
+  /// * 削除が未確定（旅行が残っている）→ ファイルを元へ戻す
+  /// * 削除確定済みかつ期限内 → Undo可能な状態として復元しSnackBarを出す
+  /// * 期限切れはStorageCleanupが確定削除する
+  Future<void> _recoverPendingDeletions() async {
+    if (_loadError != null || _pendingDeletion != null) return;
+    try {
+      final root = await getApplicationDocumentsDirectory();
+      final recovery = await _pendingDeletionStore.recover(
+        root,
+        tripExists: (tripId) => _data.trips.any((trip) => trip.id == tripId),
+      );
+      if (recovery.active.isEmpty || !mounted) return;
+      final active = recovery.active.first;
+      final remaining = active.expiresAt.difference(
+        _pendingDeletionStore.now(),
+      );
+      _pendingDeletionTimer?.cancel();
+      _pendingDeletion = active;
+      _pendingDeletionTimer = Timer(
+        remaining.isNegative ? Duration.zero : remaining,
+        () => unawaited(_expirePendingDeletion()),
+      );
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(_undoSnackBar(active));
+    } catch (error) {
+      debugPrint('PendingDeletion: 起動時回収に失敗しました: $error');
     }
   }
 
@@ -281,7 +313,7 @@ extension _HomeDataActions on _HomePageState {
     final confirmed = await _confirm(
       title: '写真も削除',
       message:
-          '「${trip.title}」と写真${trip.photos.length}枚を端末から削除します。この操作は元に戻せません。',
+          '「${trip.title}」と写真${trip.photos.length}枚を端末から削除します。すぐに元に戻すことができます。',
       confirmLabel: '削除する',
       destructive: true,
     );
@@ -305,31 +337,23 @@ extension _HomeDataActions on _HomePageState {
         final trip = _data.trips.where((item) => item.id == tripId).firstOrNull;
         if (trip == null) throw StateError('削除する旅行が見つかりません');
         final root = await getApplicationDocumentsDirectory();
-        final pending = await const PendingDeletionStore().stage(trip, root);
-        await _commitData(removeTrip(_data, tripId));
-        _pendingDeletionTimer?.cancel();
-        _pendingDeletion = pending;
-        _pendingDeletionTimer = Timer(
-          PendingDeletionStore.undoWindow,
-          () async {
-            final current = _pendingDeletion;
-            if (current == null) return;
-            await const PendingDeletionStore().finalize(current);
-            _pendingDeletion = null;
-          },
+        // 先に退避とmanifestの永続化を完了させてからAppDataを確定する。
+        // 途中で失敗した場合はstage内で元パスへ巻き戻し、データを失わない。
+        final pending = await _pendingDeletionStore.stage(
+          trip,
+          root,
+          tripIndex: _data.trips.indexOf(trip),
         );
+        try {
+          await _commitData(removeTrip(_data, tripId));
+        } catch (_) {
+          await _pendingDeletionStore.rollback(pending);
+          rethrow;
+        }
+        _setPendingDeletion(pending);
         if (!mounted) return;
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('旅行を削除しました'),
-            duration: PendingDeletionStore.undoWindow,
-            action: SnackBarAction(
-              label: '元に戻す',
-              onPressed: () => unawaited(_undoPendingDeletion()),
-            ),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(_undoSnackBar(pending));
       });
     } catch (error) {
       _showError('旅行の削除', error);
@@ -341,16 +365,65 @@ extension _HomeDataActions on _HomePageState {
     if (pending == null) return;
     try {
       await _coordinator.runMutation(() async {
-        final restored = await const PendingDeletionStore().restore(pending);
-        final restoredTrip = pending.trip.copyWith(photos: restored);
-        await _commitData(addNewTrip(_data, restoredTrip));
+        // 期限切れで確定削除が始まっていた場合は二重実行を防ぐ。
+        if (_pendingDeletion != pending) return;
+        final restoredTrip = await _pendingDeletionStore.restore(pending);
+        try {
+          await _commitData(
+            addNewTrip(_data, restoredTrip, atIndex: pending.tripIndex),
+          );
+        } catch (_) {
+          await _pendingDeletionStore.revertRestore(pending);
+          rethrow;
+        }
         _pendingDeletionTimer?.cancel();
         _pendingDeletion = null;
+        await _pendingDeletionStore.commitRestore(pending);
         _showMessage('旅行と写真を元に戻しました');
       });
     } catch (error) {
       _showError('削除の取り消し', error);
     }
+  }
+
+  /// Undo期限を過ぎた削除を確定する。failure時は次回起動のcleanupで再試行される。
+  Future<void> _expirePendingDeletion() async {
+    final pending = _pendingDeletion;
+    if (pending == null) return;
+    try {
+      await _coordinator.runMutation(() async {
+        if (_pendingDeletion != pending) return;
+        _pendingDeletion = null;
+        try {
+          await _pendingDeletionStore.finalize(pending);
+        } catch (_) {
+          // 削除は次回起動のcleanupが再試行する。二重に実行しない。
+        }
+      });
+    } catch (_) {
+      _pendingDeletion = null;
+    }
+  }
+
+  /// pending削除状態をメモリに反映し、期限到来時の確定削除タイマーを開始する。
+  void _setPendingDeletion(PendingDeletion pending) {
+    _pendingDeletionTimer?.cancel();
+    _pendingDeletion = pending;
+    _pendingDeletionTimer = Timer(
+      pending.expiresAt.difference(_pendingDeletionStore.now()),
+      () => unawaited(_expirePendingDeletion()),
+    );
+  }
+
+  SnackBar _undoSnackBar(PendingDeletion pending) {
+    return SnackBar(
+      content: const Text('旅行を削除しました'),
+      duration: pending.expiresAt.difference(_pendingDeletionStore.now()),
+      action: SnackBarAction(
+        label: '元に戻す',
+        onPressed: () => unawaited(_undoPendingDeletion()),
+      ),
+    );
   }
 
   Future<void> _createTripFromUnassigned() async {
