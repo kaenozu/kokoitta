@@ -148,6 +148,55 @@ void main() {
     expect((storedPhotos.single as Map)['path'], photo.path);
   });
 
+  test('v2で旅行とは別パスの旅行未設定写真も無損失で移行する', () async {
+    final tripPhoto = await createPhotoFile('v2-trip.jpg');
+    final unassignedPhoto = await createPhotoFile('v2-unassigned.jpg');
+    final raw = jsonEncode(<String, Object>{
+      'schemaVersion': TripStore.legacySchemaVersion,
+      'trips': <Object>[
+        <String, Object>{
+          'id': 'trip-old',
+          'title': 'v2の旅行',
+          'photos': <String>[tripPhoto.path],
+        },
+      ],
+      'unassignedPhotos': <String>[unassignedPhoto.path],
+      'prefectureStates': const <String, String>{},
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.dataKey: raw,
+    });
+    final store = TripStore();
+
+    final loaded = await store.load();
+    final preferences = await SharedPreferences.getInstance();
+
+    expect(loaded.trips.single.photos.single.file.path, tripPhoto.path);
+    expect(
+      loaded.trips.single.photos.single.id,
+      TripStore.legacyPhotoId(tripPhoto.path),
+    );
+    expect(loaded.unassignedPhotos, hasLength(1));
+    expect(loaded.unassignedPhotos.single.file.path, unassignedPhoto.path);
+    expect(
+      loaded.unassignedPhotos.single.id,
+      TripStore.legacyPhotoId(unassignedPhoto.path),
+    );
+
+    final stored =
+        jsonDecode(preferences.getString(TripStore.dataKey)!)
+            as Map<String, dynamic>;
+    expect(stored['schemaVersion'], TripStore.schemaVersion);
+    final storedUnassigned =
+        (stored['unassignedPhotos'] as List<dynamic>).single
+            as Map<String, dynamic>;
+    expect(
+      storedUnassigned['id'],
+      TripStore.legacyPhotoId(unassignedPhoto.path),
+    );
+    expect(storedUnassigned['path'], unassignedPhoto.path);
+  });
+
   test('再migrationしてもv2由来の写真IDは変わらない', () async {
     final photo = await createPhotoFile('stable.jpg');
     final raw = jsonEncode(<String, Object>{

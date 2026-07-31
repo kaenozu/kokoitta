@@ -175,16 +175,17 @@ extension _HomeDataActions on _HomePageState {
       for (var index = 0; index < paths.length; index++) {
         final source = File(paths[index]);
         if (!await source.exists()) continue;
-        final stat = await source.stat();
         final destination = File(
           '${photosDirectory.path}/${createEntityId('shared')}-${index.toString().padLeft(3, '0')}${_safeExtension(source.path)}',
         );
         final copiedFile = await source.copy(destination.path);
+        // 撮影日時は不明のためnull。ファイル更新日時を撮影日時として
+        // 永続化してはならない（推測日時の保存禁止）。
         copied.add(
           Photo(
             id: createPhotoId(),
             file: copiedFile,
-            capturedAt: stat.modified,
+            capturedAt: null,
             originalName: _originalNameOfPath(source.path),
             mimeType: _mimeTypeOf(source.path),
           ),
@@ -265,17 +266,18 @@ extension _HomeDataActions on _HomePageState {
       for (var index = 0; index < selected.length; index++) {
         final image = selected[index];
         final source = File(image.path);
-        final stat = await source.stat();
         final safeName = image.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
         final destination = File(
           '${photosDirectory.path}/${createEntityId('photo')}-${index.toString().padLeft(3, '0')}-$safeName',
         );
         final copiedFile = await source.copy(destination.path);
+        // 撮影日時は不明のためnull。ファイル更新日時を撮影日時として
+        // 永続化してはならない（推測日時の保存禁止）。
         copied.add(
           Photo(
             id: createPhotoId(),
             file: copiedFile,
-            capturedAt: stat.modified,
+            capturedAt: null,
             originalName: image.name,
             mimeType: _mimeTypeOf(image.path),
           ),
