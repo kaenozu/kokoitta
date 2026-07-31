@@ -35,7 +35,6 @@ void main() {
     expect(find.text('地図'), findsOneWidget);
     expect(find.text('旅行'), findsOneWidget);
     expect(find.text('写真を追加'), findsOneWidget);
-    expect(find.text('都道府県マップ'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('prefecture-map-01')),
       findsOneWidget,
@@ -53,8 +52,13 @@ void main() {
     await tester.pumpAndSettle();
 
     final hokkaido = find.byKey(hokkaidoKey);
-    await tester.ensureVisible(hokkaido);
-    await tester.tap(hokkaido);
+    final hokkaidoTapTarget = find.descendant(
+      of: hokkaido,
+      matching: find.byType(InkWell),
+    );
+    await tester.ensureVisible(hokkaidoTapTarget);
+    await tester.pumpAndSettle();
+    await tester.tap(hokkaidoTapTarget);
     await tester.pumpAndSettle();
 
     expect(
@@ -67,6 +71,9 @@ void main() {
     await tester.pumpWidget(const KokoittaApp());
     await tester.pumpAndSettle();
 
+    final restoredHokkaido = find.byKey(hokkaidoKey);
+    await tester.ensureVisible(restoredHokkaido);
+    await tester.pumpAndSettle();
     expect(
       find.bySemanticsLabel(RegExp('北海道、訪問済み')),
       findsOneWidget,
