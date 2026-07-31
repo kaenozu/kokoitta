@@ -186,6 +186,54 @@ void main() {
     expect(TripStore.legacyPhotoId('C:/photos/a.jpg'), idA);
   });
 
+  test('v2でセパレータ表記違いの同一パスは1件へ集約して移行する', () async {
+    final photo = await createPhotoFile('mixed.jpg');
+    final slashPath = photo.path.replaceAll('\\', '/');
+    final raw = jsonEncode(<String, Object>{
+      'schemaVersion': TripStore.legacySchemaVersion,
+      'trips': <Object>[
+        <String, Object>{
+          'id': 'trip-old',
+          'title': 'セパレータ混在の旅行',
+          'photos': <String>[photo.path, slashPath],
+        },
+      ],
+      'unassignedPhotos': <String>[slashPath],
+      'prefectureStates': const <String, String>{},
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.dataKey: raw,
+    });
+    final store = TripStore();
+
+    final loaded = await store.load();
+
+    expect(loaded.trips.single.photos, hasLength(1), reason: '表記違いは1枚へ集約');
+    expect(
+      loaded.trips.single.photos.single.id,
+      TripStore.legacyPhotoId(photo.path),
+    );
+    expect(loaded.unassignedPhotos, isEmpty);
+  });
+
+  test('v1でセパレータ表記違いの同一パスは1件へ集約して移行する', () async {
+    final photo = await createPhotoFile('legacy-mixed.jpg');
+    final slashPath = photo.path.replaceAll('\\', '/');
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.legacyTripsKey: <String>['旧旅行|${photo.path};;$slashPath'],
+      TripStore.legacyPrefectureStatesKey: const <String>[],
+    });
+    final store = TripStore();
+
+    final loaded = await store.load();
+
+    expect(loaded.trips.single.photos, hasLength(1), reason: '表記違いは1枚へ集約');
+    expect(
+      loaded.trips.single.photos.single.id,
+      TripStore.legacyPhotoId(photo.path),
+    );
+  });
+
   test('v3のmetadataは保存・再読込で保持される', () async {
     final photo = await createPhotoFile('meta.jpg');
     final capturedAt = DateTime(2026, 7, 15, 10, 30);

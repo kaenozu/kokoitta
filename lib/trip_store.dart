@@ -305,7 +305,7 @@ class TripStore {
       if (path is! String) {
         throw const FormatException('写真パスが壊れています');
       }
-      if (!claimedPaths.add(path)) continue;
+      if (!claimedPaths.add(path.replaceAll('\\', '/'))) continue;
       final file = File(path);
       if (!file.existsSync()) continue;
       photos.add(Photo(id: legacyPhotoId(path), file: file));
@@ -444,7 +444,7 @@ class TripStore {
           .substring(separator + 1)
           .split(';;')
           .where((path) => path.isNotEmpty)
-          .where(claimedPaths.add)
+          .where((path) => claimedPaths.add(path.replaceAll('\\', '/')))
           .map((path) => Photo(id: legacyPhotoId(path), file: File(path)))
           .where((photo) => photo.file.existsSync())
           .toList(growable: false);
