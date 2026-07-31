@@ -428,9 +428,8 @@ extension _HomeView on _HomePageState {
           width: double.infinity,
           fit: BoxFit.cover,
           cacheWidth: dimension,
-          errorBuilder: (_, _, _) => const Center(
-            child: Icon(Icons.broken_image_outlined, size: 48),
-          ),
+          errorBuilder: (_, _, _) =>
+              const Center(child: Icon(Icons.broken_image_outlined, size: 48)),
         );
       },
     );
