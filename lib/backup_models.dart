@@ -1,27 +1,44 @@
 part of 'backup_service.dart';
 
+/// 復元候補の1枚の写真。ID・metadataは新形式（v3）Backupから引き継ぎ、
+/// 旧形式（v1/v2）からは復元時に新規生成する。
+class PreparedPhoto {
+  PreparedPhoto({
+    required this.id,
+    required this.relativePath,
+    this.capturedAt,
+    this.location,
+    this.originalName,
+    this.mimeType,
+  });
+
+  final String id;
+  final String relativePath;
+  final DateTime? capturedAt;
+  final String? location;
+  final String? originalName;
+  final String? mimeType;
+}
+
 class PreparedRestore {
   PreparedRestore({
     required this.stagingDirectory,
     required this.permanentRoot,
     required this.trips,
-    required this.unassignedRelativePhotoPaths,
+    required this.unassignedPhotos,
     required this.prefectureStates,
   });
 
   final Directory stagingDirectory;
   final Directory permanentRoot;
   final List<PreparedTrip> trips;
-  final List<String> unassignedRelativePhotoPaths;
+  final List<PreparedPhoto> unassignedPhotos;
   final Map<String, String> prefectureStates;
 
   int get tripCount => trips.length;
   int get photoCount =>
-      unassignedRelativePhotoPaths.length +
-      trips.fold<int>(
-        0,
-        (sum, trip) => sum + trip.relativePhotoPaths.length,
-      );
+      unassignedPhotos.length +
+      trips.fold<int>(0, (sum, trip) => sum + trip.photos.length);
 
   Future<CommittedRestore> commit() async {
     await permanentRoot.create(recursive: true);
@@ -33,18 +50,26 @@ class PreparedRestore {
     File resolve(String relativePath) =>
         File('${committedDirectory.path}/$relativePath');
 
+    Photo toPhoto(PreparedPhoto prepared) => Photo(
+      id: prepared.id,
+      file: resolve(prepared.relativePath),
+      capturedAt: prepared.capturedAt,
+      location: prepared.location,
+      originalName: prepared.originalName,
+      mimeType: prepared.mimeType,
+    );
+
     final data = AppData(
       trips: trips
           .map(
             (trip) => Trip(
               id: trip.id,
               title: trip.title,
-              photos: trip.relativePhotoPaths.map(resolve).toList(),
+              photos: trip.photos.map(toPhoto).toList(growable: false),
             ),
           )
-          .toList(),
-      unassignedPhotos:
-          unassignedRelativePhotoPaths.map(resolve).toList(growable: false),
+          .toList(growable: false),
+      unassignedPhotos: unassignedPhotos.map(toPhoto).toList(growable: false),
       prefectureStates: prefectureStates,
     );
     return CommittedRestore(data: data, directory: committedDirectory);
@@ -61,12 +86,12 @@ class PreparedTrip {
   PreparedTrip({
     required this.id,
     required this.title,
-    required this.relativePhotoPaths,
-  });
+    required List<PreparedPhoto> photos,
+  }) : photos = List<PreparedPhoto>.unmodifiable(photos);
 
   final String id;
   final String title;
-  final List<String> relativePhotoPaths;
+  final List<PreparedPhoto> photos;
 }
 
 class CommittedRestore {
@@ -83,27 +108,45 @@ class CommittedRestore {
 class _ParsedBackup {
   _ParsedBackup({
     required this.trips,
-    required this.unassignedPhotoPaths,
+    required this.unassignedPhotos,
     required this.prefectureStates,
   });
 
   final List<_ParsedTrip> trips;
-  final List<String> unassignedPhotoPaths;
+  final List<_ParsedPhoto> unassignedPhotos;
   final Map<String, String> prefectureStates;
 
   int get photoCount =>
-      unassignedPhotoPaths.length +
-      trips.fold<int>(0, (sum, trip) => sum + trip.photoPaths.length);
+      unassignedPhotos.length +
+      trips.fold<int>(0, (sum, trip) => sum + trip.photos.length);
 }
 
 class _ParsedTrip {
   _ParsedTrip({
     required this.id,
     required this.title,
-    required this.photoPaths,
-  });
+    required List<_ParsedPhoto> photos,
+  }) : photos = List<_ParsedPhoto>.unmodifiable(photos);
 
   final String id;
   final String title;
-  final List<String> photoPaths;
+  final List<_ParsedPhoto> photos;
+}
+
+class _ParsedPhoto {
+  _ParsedPhoto({
+    required this.id,
+    required this.archivePath,
+    this.capturedAt,
+    this.location,
+    this.originalName,
+    this.mimeType,
+  });
+
+  final String id;
+  final String archivePath;
+  final DateTime? capturedAt;
+  final String? location;
+  final String? originalName;
+  final String? mimeType;
 }

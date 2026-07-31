@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'models.dart';
+import 'photo.dart';
 import 'validators.dart';
 
 part 'backup_restore.dart';
@@ -20,12 +21,12 @@ class BackupService {
   BackupService({
     DocumentsDirectoryProvider? documentsDirectoryProvider,
     BackupFilePicker? backupFilePicker,
-  })  : _documentsDirectoryProvider =
-            documentsDirectoryProvider ?? getApplicationDocumentsDirectory,
-        _backupFilePicker = backupFilePicker ?? _pickBackupFile;
+  }) : _documentsDirectoryProvider =
+           documentsDirectoryProvider ?? getApplicationDocumentsDirectory,
+       _backupFilePicker = backupFilePicker ?? _pickBackupFile;
 
   static const String appId = 'com.kaenozu.kokoitta_app';
-  static const int currentFormatVersion = 2;
+  static const int currentFormatVersion = 3;
   static const int maxTrips = 10;
   static const int maxPhotos = 300;
   static const int maxCompressedBytes = 700 * 1024 * 1024;
@@ -57,22 +58,24 @@ class BackupService {
   Future<void> shareBackup(File file) =>
       _BackupRestoreOperations(this).shareBackup(file);
 
-  Future<File> _createBackup(
-    AppData data, {
-    required String folderName,
-  }) async {
+  Future<File> _createBackup(AppData data, {required String folderName}) async {
     final checksums = <String, String>{};
     final archiveFiles = <({File file, String archivePath})>[];
+    final claimedIds = <String>{};
     var totalBytes = 0;
     var photoCount = 0;
 
-    Future<List<String>> inspectPhotos(
-      Iterable<File> photos,
+    Future<List<Map<String, Object>>> inspectPhotos(
+      Iterable<Photo> photos,
       String group,
     ) async {
-      final paths = <String>[];
+      final records = <Map<String, Object>>[];
       var index = 0;
-      for (final file in photos) {
+      for (final photo in photos) {
+        if (!claimedIds.add(photo.id)) {
+          throw StateError('同じ写真IDが複数箇所に所属しています: ${photo.id}');
+        }
+        final file = photo.file;
         if (!await file.exists()) {
           throw FileSystemException('バックアップ対象の写真がありません', file.path);
         }
@@ -90,10 +93,18 @@ class BackupService {
         final digest = await sha256.bind(file.openRead()).first;
         checksums[archivePath] = digest.toString();
         archiveFiles.add((file: file, archivePath: archivePath));
-        paths.add(archivePath);
+        records.add(<String, Object>{
+          'id': photo.id,
+          'archivePath': archivePath,
+          if (photo.capturedAt != null)
+            'capturedAt': photo.capturedAt!.toIso8601String(),
+          if (photo.location != null) 'location': photo.location!,
+          if (photo.originalName != null) 'originalName': photo.originalName!,
+          if (photo.mimeType != null) 'mimeType': photo.mimeType!,
+        });
         index += 1;
       }
-      return paths;
+      return records;
     }
 
     final tripRecords = <Map<String, Object>>[];
@@ -105,14 +116,14 @@ class BackupService {
         'photos': await inspectPhotos(trip.photos, 'trip-$index'),
       });
     }
-    final unassignedPaths = await inspectPhotos(
+    final unassignedRecords = await inspectPhotos(
       data.unassignedPhotos,
       'unassigned',
     );
 
     final records = <String, Object>{
       'trips': tripRecords,
-      'unassignedPhotos': unassignedPaths,
+      'unassignedPhotos': unassignedRecords,
       'prefectureStates': data.prefectureStates,
     };
     final manifest = <String, Object>{
@@ -130,9 +141,7 @@ class BackupService {
     final backupDirectory = Directory('${directory.path}/$folderName');
     await backupDirectory.create(recursive: true);
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final file = File(
-      '${backupDirectory.path}/kokoitta-backup-$timestamp.zip',
-    );
+    final file = File('${backupDirectory.path}/kokoitta-backup-$timestamp.zip');
     final workDirectory = Directory(
       '${directory.path}/backup-staging/$timestamp',
     );

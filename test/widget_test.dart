@@ -48,7 +48,7 @@ void main() {
       TripStore.dataKey: jsonEncode(<String, Object>{
         'schemaVersion': TripStore.schemaVersion,
         'trips': trips,
-        'unassignedPhotos': <String>[],
+        'unassignedPhotos': <Object>[],
         'prefectureStates': <String, String>{},
       }),
     });
@@ -58,7 +58,14 @@ void main() {
       <String, Object>{
         'id': id,
         'title': 'テスト旅行 $id',
-        'photos': photos.map((file) => file.path).toList(growable: false),
+        'photos': photos
+            .map(
+              (file) => <String, Object>{
+                'id': TripStore.legacyPhotoId(file.path),
+                'path': file.path,
+              },
+            )
+            .toList(growable: false),
       };
 
   setUp(() {

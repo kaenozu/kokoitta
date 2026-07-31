@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'photo.dart';
 
 int _entitySequence = 0;
 
@@ -8,21 +8,14 @@ String createEntityId(String prefix) {
 }
 
 class Trip {
-  Trip({
-    required this.id,
-    required this.title,
-    required List<File> photos,
-  }) : photos = List<File>.unmodifiable(photos);
+  Trip({required this.id, required this.title, required List<Photo> photos})
+    : photos = List<Photo>.unmodifiable(photos);
 
   final String id;
   final String title;
-  final List<File> photos;
+  final List<Photo> photos;
 
-  Trip copyWith({
-    String? id,
-    String? title,
-    List<File>? photos,
-  }) {
+  Trip copyWith({String? id, String? title, List<Photo>? photos}) {
     return Trip(
       id: id ?? this.id,
       title: title ?? this.title,
@@ -34,27 +27,27 @@ class Trip {
 class AppData {
   AppData({
     required List<Trip> trips,
-    required List<File> unassignedPhotos,
+    required List<Photo> unassignedPhotos,
     required Map<String, String> prefectureStates,
-  })  : trips = List<Trip>.unmodifiable(trips),
-        unassignedPhotos = List<File>.unmodifiable(unassignedPhotos),
-        prefectureStates = Map<String, String>.unmodifiable(prefectureStates);
+  }) : trips = List<Trip>.unmodifiable(trips),
+       unassignedPhotos = List<Photo>.unmodifiable(unassignedPhotos),
+       prefectureStates = Map<String, String>.unmodifiable(prefectureStates);
 
   factory AppData.empty() => AppData(
-        trips: const <Trip>[],
-        unassignedPhotos: const <File>[],
-        prefectureStates: const <String, String>{},
-      );
+    trips: const <Trip>[],
+    unassignedPhotos: const <Photo>[],
+    prefectureStates: const <String, String>{},
+  );
 
   final List<Trip> trips;
-  final List<File> unassignedPhotos;
+  final List<Photo> unassignedPhotos;
   final Map<String, String> prefectureStates;
 
   int get photoCount =>
       unassignedPhotos.length +
       trips.fold<int>(0, (sum, trip) => sum + trip.photos.length);
 
-  Iterable<File> get allPhotos sync* {
+  Iterable<Photo> get allPhotos sync* {
     for (final trip in trips) {
       yield* trip.photos;
     }
@@ -63,7 +56,7 @@ class AppData {
 
   AppData copyWith({
     List<Trip>? trips,
-    List<File>? unassignedPhotos,
+    List<Photo>? unassignedPhotos,
     Map<String, String>? prefectureStates,
   }) {
     return AppData(

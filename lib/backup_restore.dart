@@ -44,36 +44,26 @@ extension _BackupRestoreOperations on BackupService {
     final entryNames = <String>{};
     for (final entry in archive.files) {
       if (!entry.isFile) {
-        throw FormatException(
-          '無効なバックアップです（ZIP内に不正なエントリがあります: ${entry.name}）',
-        );
+        throw FormatException('無効なバックアップです（ZIP内に不正なエントリがあります: ${entry.name}）');
       }
       final name = entry.name;
       if (!_isValidEntryName(name)) {
-        throw FormatException(
-          '無効なバックアップです（ZIP内に不正なパスがあります: $name）',
-        );
+        throw FormatException('無効なバックアップです（ZIP内に不正なパスがあります: $name）');
       }
       if (name != 'manifest.json' &&
           name != 'trips.json' &&
           !name.startsWith('photos/')) {
-        throw FormatException(
-          '無効なバックアップです（不明なZIPエントリがあります: $name）',
-        );
+        throw FormatException('無効なバックアップです（不明なZIPエントリがあります: $name）');
       }
       if (!entryNames.add(name)) {
-        throw FormatException(
-          '無効なバックアップです（ZIP内に重複したパスがあります: $name）',
-        );
+        throw FormatException('無効なバックアップです（ZIP内に重複したパスがあります: $name）');
       }
     }
 
     final manifestFile = archive.findFile('manifest.json');
     final tripsFile = archive.findFile('trips.json');
     if (manifestFile == null || tripsFile == null) {
-      throw const FormatException(
-        'manifest.json または trips.json がありません',
-      );
+      throw const FormatException('manifest.json または trips.json がありません');
     }
 
     _validateMetadataEntrySize(
@@ -93,16 +83,19 @@ extension _BackupRestoreOperations on BackupService {
       throw const FormatException('別のアプリのバックアップです');
     }
     final formatVersion = manifest['backupFormatVersion'];
-    if (formatVersion != 1 &&
-        formatVersion != BackupService.currentFormatVersion) {
+    if (formatVersion is! int ||
+        formatVersion < 1 ||
+        formatVersion > BackupService.currentFormatVersion) {
       throw const FormatException('対応していないバックアップ形式です');
     }
 
     final rawTrips = _decodeJson(tripsFile, 'trips.json');
     _validateJsonValue(rawTrips, 'trips.json');
-    final parsed = formatVersion == 1
-        ? _parseVersion1(rawTrips)
-        : _parseVersion2(rawTrips);
+    final parsed = switch (formatVersion) {
+      1 => _parseVersion1(rawTrips),
+      2 => _parseVersion2(rawTrips),
+      _ => _parseVersion3(rawTrips),
+    };
     if (parsed.trips.length > BackupService.maxTrips ||
         parsed.photoCount > BackupService.maxPhotos) {
       throw const FormatException('無料版の旅行数または写真枚数の上限を超えています');
@@ -117,8 +110,22 @@ extension _BackupRestoreOperations on BackupService {
       throw const FormatException('バックアップ件数が一致しません');
     }
 
+    final seenPhotoIds = <String>{};
+    for (final trip in parsed.trips) {
+      for (final photo in trip.photos) {
+        if (!seenPhotoIds.add(photo.id)) {
+          throw FormatException('写真IDが重複しています: ${photo.id}');
+        }
+      }
+    }
+    for (final photo in parsed.unassignedPhotos) {
+      if (!seenPhotoIds.add(photo.id)) {
+        throw FormatException('写真IDが重複しています: ${photo.id}');
+      }
+    }
+
     final checksums = <String, String>{};
-    if (formatVersion == BackupService.currentFormatVersion) {
+    if (formatVersion >= 2) {
       if (manifest['checksumsAlgorithm'] != 'sha-256' ||
           manifest['checksums'] is! Map) {
         throw const FormatException('チェックサム情報がありません');
@@ -141,13 +148,14 @@ extension _BackupRestoreOperations on BackupService {
     var extractedPhotos = 0;
     final seenArchivePaths = <String>{};
 
-    Future<List<String>> extractPhotos(
-      List<String> archivePaths,
+    Future<List<PreparedPhoto>> extractPhotos(
+      List<_ParsedPhoto> photos,
       String group,
     ) async {
-      final relativePaths = <String>[];
-      for (var index = 0; index < archivePaths.length; index++) {
-        final archivePath = archivePaths[index];
+      final prepared = <PreparedPhoto>[];
+      for (var index = 0; index < photos.length; index++) {
+        final photo = photos[index];
+        final archivePath = photo.archivePath;
         _validateArchivePhotoPath(archivePath);
         if (!seenArchivePaths.add(archivePath)) {
           throw FormatException('同じ写真が複数回参照されています: $archivePath');
@@ -169,7 +177,7 @@ extension _BackupRestoreOperations on BackupService {
             extractedPhotos > BackupService.maxPhotos) {
           throw const FormatException('展開後の容量または写真枚数が上限を超えています');
         }
-        if (formatVersion == BackupService.currentFormatVersion) {
+        if (formatVersion >= 2) {
           final expected = checksums[archivePath];
           final actual = sha256.convert(content).toString();
           if (expected == null || expected != actual) {
@@ -182,9 +190,18 @@ extension _BackupRestoreOperations on BackupService {
         final destination = File('${stagingDirectory.path}/$relativePath');
         await destination.parent.create(recursive: true);
         await destination.writeAsBytes(content, flush: true);
-        relativePaths.add(relativePath);
+        prepared.add(
+          PreparedPhoto(
+            id: photo.id,
+            relativePath: relativePath,
+            capturedAt: photo.capturedAt,
+            location: photo.location,
+            originalName: photo.originalName,
+            mimeType: photo.mimeType,
+          ),
+        );
       }
-      return relativePaths;
+      return prepared;
     }
 
     try {
@@ -195,15 +212,12 @@ extension _BackupRestoreOperations on BackupService {
           PreparedTrip(
             id: trip.id,
             title: trip.title,
-            relativePhotoPaths: await extractPhotos(
-              trip.photoPaths,
-              'trips/$index',
-            ),
+            photos: await extractPhotos(trip.photos, 'trips/$index'),
           ),
         );
       }
       final unassigned = await extractPhotos(
-        parsed.unassignedPhotoPaths,
+        parsed.unassignedPhotos,
         'unassigned',
       );
 
@@ -216,7 +230,7 @@ extension _BackupRestoreOperations on BackupService {
         stagingDirectory: stagingDirectory,
         permanentRoot: Directory('${documentsDirectory.path}/photo-sets'),
         trips: preparedTrips,
-        unassignedRelativePhotoPaths: unassigned,
+        unassignedPhotos: unassigned,
         prefectureStates: parsed.prefectureStates,
       );
     } catch (_) {
@@ -229,10 +243,7 @@ extension _BackupRestoreOperations on BackupService {
 
   Future<void> shareBackup(File file) async {
     await SharePlus.instance.share(
-      ShareParams(
-        files: <XFile>[XFile(file.path)],
-        text: 'ここいったのバックアップ',
-      ),
+      ShareParams(files: <XFile>[XFile(file.path)], text: 'ここいったのバックアップ'),
     );
   }
 }
@@ -247,10 +258,7 @@ Future<File?> _pickBackupFile() async {
   return File(result.xFiles.single.path);
 }
 
-Map<String, dynamic> _decodeMap(
-  ArchiveFile file,
-  String name,
-) {
+Map<String, dynamic> _decodeMap(ArchiveFile file, String name) {
   final decoded = _decodeJson(file, name);
   if (decoded is! Map) throw FormatException('$name の形式が正しくありません');
   return Map<String, dynamic>.from(decoded);
@@ -305,18 +313,14 @@ void _validateMetadataEntrySize(
 }) {
   final size = file.size;
   if (size <= 0) {
-    throw FormatException(
-      '無効なバックアップです（$nameの容量が正しくありません）',
-    );
+    throw FormatException('無効なバックアップです（$nameの容量が正しくありません）');
   }
   if (size > maxBytes) {
-    throw FormatException(
-      '無効なバックアップです（$nameの容量が上限を超えています）',
-    );
+    throw FormatException('無効なバックアップです（$nameの容量が上限を超えています）');
   }
 }
 
-  _ParsedBackup _parseVersion1(Object? value) {
+_ParsedBackup _parseVersion1(Object? value) {
   if (value is! List) {
     throw const FormatException('旅行データの形式が正しくありません');
   }
@@ -338,18 +342,20 @@ void _validateMetadataEntrySize(
       _ParsedTrip(
         id: createEntityId('trip'),
         title: title,
-        photoPaths: _requiredStringList(record['photos'], '写真一覧'),
+        photos: _parseLegacyPhotoPaths(
+          _requiredStringList(record['photos'], '写真一覧'),
+        ),
       ),
     );
   }
   return _ParsedBackup(
     trips: trips,
-    unassignedPhotoPaths: const <String>[],
+    unassignedPhotos: const <_ParsedPhoto>[],
     prefectureStates: const <String, String>{},
   );
 }
 
-  _ParsedBackup _parseVersion2(Object? value) {
+_ParsedBackup _parseVersion2(Object? value) {
   if (value is! Map) {
     throw const FormatException('旅行データの形式が正しくありません');
   }
@@ -380,7 +386,9 @@ void _validateMetadataEntrySize(
       _ParsedTrip(
         id: id,
         title: title,
-        photoPaths: _requiredStringList(record['photos'], '写真一覧'),
+        photos: _parseLegacyPhotoPaths(
+          _requiredStringList(record['photos'], '写真一覧'),
+        ),
       ),
     );
   }
@@ -397,13 +405,103 @@ void _validateMetadataEntrySize(
 
   return _ParsedBackup(
     trips: trips,
-    unassignedPhotoPaths: _requiredStringList(
+    unassignedPhotos: _parseLegacyPhotoPaths(
+      _requiredStringList(root['unassignedPhotos'], '旅行未設定の写真一覧'),
+    ),
+    prefectureStates: normalizePrefectureStates(prefectureStates),
+  );
+}
+
+_ParsedBackup _parseVersion3(Object? value) {
+  if (value is! Map) {
+    throw const FormatException('旅行データの形式が正しくありません');
+  }
+  final root = Map<String, dynamic>.from(value);
+  final tripsValue = root['trips'];
+  if (tripsValue is! List) {
+    throw const FormatException('旅行データがありません');
+  }
+
+  final trips = <_ParsedTrip>[];
+  final seenIds = <String>{};
+  for (final recordValue in tripsValue) {
+    if (recordValue is! Map) {
+      throw const FormatException('旅行データが壊れています');
+    }
+    final record = Map<String, dynamic>.from(recordValue);
+    var id = _requiredString(record['id'], '旅行ID');
+    if (!seenIds.add(id)) id = createEntityId('trip');
+    final titleValue = record['title'];
+    if (titleValue is! String) {
+      continue;
+    }
+    final title = normalizeTripTitle(titleValue);
+    if (title == null) {
+      continue;
+    }
+    trips.add(
+      _ParsedTrip(
+        id: id,
+        title: title,
+        photos: _requiredPhotoList(record['photos'], '写真一覧'),
+      ),
+    );
+  }
+
+  final prefectureStates = <String, String>{};
+  final statesValue = root['prefectureStates'];
+  if (statesValue is Map) {
+    for (final entry in statesValue.entries) {
+      if (entry.key is String && entry.value is String) {
+        prefectureStates[entry.key as String] = entry.value as String;
+      }
+    }
+  }
+
+  return _ParsedBackup(
+    trips: trips,
+    unassignedPhotos: _requiredPhotoList(
       root['unassignedPhotos'],
       '旅行未設定の写真一覧',
     ),
     prefectureStates: normalizePrefectureStates(prefectureStates),
   );
 }
+
+/// v1/v2（写真IDを持たない形式）の写真パス一覧を、
+/// 新規ID付きのパース済み写真へ変換する。
+List<_ParsedPhoto> _parseLegacyPhotoPaths(List<String> paths) {
+  return paths
+      .map((path) => _ParsedPhoto(id: createPhotoId(), archivePath: path))
+      .toList();
+}
+
+List<_ParsedPhoto> _requiredPhotoList(Object? value, String label) {
+  if (value is! List) throw FormatException('$label が壊れています');
+  final result = <_ParsedPhoto>[];
+  for (final item in value) {
+    if (item is! Map) throw FormatException('$label が壊れています');
+    final record = Map<String, dynamic>.from(item);
+    result.add(
+      _ParsedPhoto(
+        id: _requiredString(record['id'], '写真ID'),
+        archivePath: _requiredString(record['archivePath'], '写真パス'),
+        capturedAt: _readOptionalDateTime(record['capturedAt']),
+        location: _readOptionalString(record['location']),
+        originalName: _readOptionalString(record['originalName']),
+        mimeType: _readOptionalString(record['mimeType']),
+      ),
+    );
+  }
+  return result;
+}
+
+DateTime? _readOptionalDateTime(Object? value) {
+  if (value is! String) return null;
+  return DateTime.tryParse(value);
+}
+
+String? _readOptionalString(Object? value) => value is String ? value : null;
 
 String _requiredString(Object? value, String label) {
   if (value is! String || value.isEmpty || value.length > 200) {
@@ -437,7 +535,5 @@ String _safeExtension(String path) {
   final separator = fileName.lastIndexOf('.');
   if (separator < 0) return '.jpg';
   final extension = fileName.substring(separator).toLowerCase();
-  return RegExp(r'^\.[a-z0-9]{1,5}$').hasMatch(extension)
-      ? extension
-      : '.jpg';
+  return RegExp(r'^\.[a-z0-9]{1,5}$').hasMatch(extension) ? extension : '.jpg';
 }
