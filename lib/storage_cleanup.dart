@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'models.dart';
+import 'pending_deletion.dart';
 
 typedef DeleteFileFn = Future<void> Function(String path);
 typedef DeleteDirFn = Future<void> Function(
@@ -45,6 +47,12 @@ class StorageCleanup {
       await _cleanupSafetySnapshots(directory, deleteFile);
       await _cleanupStagingDirectories(directory, deleteDirectory);
       if (appData != null) {
+        await _cleanupExpiredPendingDeletions(
+          directory,
+          appData,
+          deleteFile,
+          deleteDirectory,
+        );
         await _cleanupRestorePhotoSets(directory, appData, deleteDirectory);
         await _cleanupOrphanPhotos(directory, appData, deleteFile);
       }
@@ -130,6 +138,84 @@ class StorageCleanup {
           deleteDirectory,
           label: 'staging directory',
         );
+      }
+    }
+  }
+
+  /// Undo期限を過ぎ、かつAppData上から削除済みのpending deletionを確定削除する。
+  ///
+  /// 旅行がまだAppData上に残っているもの（削除未確定）はデータ保護のため
+  /// 触らない。壊れたmanifestも保持して次回起動で再試行する。
+  static Future<void> _cleanupExpiredPendingDeletions(
+    Directory directory,
+    AppData appData,
+    DeleteFileFn deleteFile,
+    DeleteDirFn deleteDirectory,
+  ) async {
+    final pendingRoot = Directory(
+      '${directory.path}/${PendingDeletionStore.pendingRootName}',
+    );
+    if (!await pendingRoot.exists()) return;
+
+    for (final subDir in _listDirectories(pendingRoot)) {
+      final manifest = File(
+        '${subDir.path}/${PendingDeletionStore.manifestName}',
+      );
+      if (!await manifest.exists()) continue;
+
+      PendingDeletion pending;
+      try {
+        final decoded = jsonDecode(await manifest.readAsString());
+        if (decoded is! Map<String, dynamic>) {
+          throw const FormatException('manifestの形式が正しくありません');
+        }
+        pending = PendingDeletion.fromJson(decoded, trashDirectory: subDir);
+      } catch (error) {
+        debugPrint(
+          'Storage cleanup: 壊れたpending deletionを保持します ${subDir.path}: $error',
+        );
+        continue;
+      }
+
+      // 削除未確定（旅行がまだ存在）は復元対象なので確定削除しない。
+      if (appData.trips.any((trip) => trip.id == pending.trip.id)) continue;
+      if (!pending.isExpired(DateTime.now())) continue;
+
+      for (final entity in _listEntities(subDir)) {
+        if (entity is! File ||
+            _basename(entity.path) == PendingDeletionStore.manifestName) {
+          continue;
+        }
+        await _tryDeleteFile(entity, deleteFile, label: 'pending photo');
+      }
+
+      // 削除に失敗した写真ファイルが残っている場合は保留し、次回のrunで再試行する。
+      // すべて削除できた場合のみmanifestと空の退避ディレクトリを削除する。
+      final remainingFiles = _listEntities(subDir)
+          .where(
+            (entity) =>
+                entity is File &&
+                _basename(entity.path) != PendingDeletionStore.manifestName,
+          )
+          .toList(growable: false);
+      if (remainingFiles.isNotEmpty) continue;
+      try {
+        await deleteFile(manifest.path);
+      } catch (error) {
+        debugPrint(
+          'Storage cleanup: failed to delete pending manifest ${subDir.path}: $error',
+        );
+        continue;
+      }
+      // 空になった場合のみ退避ディレクトリ自体を削除する（再帰削除はしない）。
+      if (subDir.existsSync() && subDir.listSync().isEmpty) {
+        try {
+          await deleteDirectory(subDir.path, recursive: false);
+        } catch (error) {
+          debugPrint(
+            'Storage cleanup: failed to delete pending deletion ${subDir.path}: $error',
+          );
+        }
       }
     }
   }
