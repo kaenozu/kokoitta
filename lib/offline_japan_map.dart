@@ -2,6 +2,30 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+typedef PrefectureStateTapHandler = Future<void> Function(
+  String name,
+  String currentState,
+);
+
+/// Supplies the persistence-aware prefecture action without coupling the map
+/// widget to the application's storage implementation.
+class PrefectureMapActions extends InheritedWidget {
+  const PrefectureMapActions({
+    super.key,
+    required this.onTap,
+    required super.child,
+  });
+
+  final PrefectureStateTapHandler onTap;
+
+  static PrefectureMapActions? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<PrefectureMapActions>();
+
+  @override
+  bool updateShouldNotify(PrefectureMapActions oldWidget) =>
+      onTap != oldWidget.onTap;
+}
+
 /// A geographically arranged prefecture cartogram.
 ///
 /// The map is intentionally hand-authored instead of depending on a remote map
@@ -21,6 +45,8 @@ class OfflineJapanMap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final inheritedAction = PrefectureMapActions.maybeOf(context)?.onTap;
+
     return Semantics(
       container: true,
       label: 'オフライン日本地図。47都道府県の訪問状態を表示',
@@ -49,6 +75,14 @@ class OfflineJapanMap extends StatelessWidget {
                   clipBehavior: Clip.none,
                   children: _prefectures.map((prefecture) {
                     final state = states[prefecture.name] ?? 'unvisited';
+                    final VoidCallback? onTap;
+                    if (onPrefectureTap != null) {
+                      onTap = () => onPrefectureTap!(prefecture.name);
+                    } else if (inheritedAction != null) {
+                      onTap = () => inheritedAction(prefecture.name, state);
+                    } else {
+                      onTap = null;
+                    }
                     return Positioned(
                       left: prefecture.column * cellWidth,
                       top: prefecture.row * cellHeight,
@@ -59,9 +93,7 @@ class OfflineJapanMap extends StatelessWidget {
                         child: _PrefectureTile(
                           prefecture: prefecture,
                           state: state,
-                          onTap: onPrefectureTap == null
-                              ? null
-                              : () => onPrefectureTap!(prefecture.name),
+                          onTap: onTap,
                         ),
                       ),
                     );
