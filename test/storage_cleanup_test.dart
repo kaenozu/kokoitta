@@ -2,7 +2,10 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/models.dart';
+import 'package:kokoitta_app/photo.dart';
 import 'package:kokoitta_app/storage_cleanup.dart';
+
+Photo photoOf(File file) => Photo.fromFile(file);
 
 void main() {
   late Directory tempDir;
@@ -203,18 +206,11 @@ void main() {
 
       final appData = AppData.empty().copyWith(
         trips: <Trip>[
-          Trip(
-            id: 't1',
-            title: 'Trip',
-            photos: <File>[photoFile],
-          ),
+          Trip(id: 't1', title: 'Trip', photos: <Photo>[photoOf(photoFile)]),
         ],
       );
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: appData,
-      );
+      await StorageCleanup.run(documentsDirectory: tempDir, appData: appData);
 
       expect(await unreferencedDir.exists(), isFalse);
       expect(await referencedDir.exists(), isTrue);
@@ -235,10 +231,10 @@ void main() {
             Trip(
               id: 't1',
               title: 'Trip',
-              photos: <File>[File('${dir.path}/trip.jpg')],
+              photos: <Photo>[photoOf(File('${dir.path}/trip.jpg'))],
             ),
           ],
-          unassignedPhotos: const <File>[],
+          unassignedPhotos: const <Photo>[],
           prefectureStates: const <String, String>{},
         ),
       );
@@ -246,51 +242,43 @@ void main() {
       expect(await dir.exists(), isTrue);
     });
 
-    test('does not delete non-restore directories even when unreferenced',
-        () async {
-      final photoSetsDir = Directory('${tempDir.path}/photo-sets');
-      await photoSetsDir.create(recursive: true);
+    test(
+      'does not delete non-restore directories even when unreferenced',
+      () async {
+        final photoSetsDir = Directory('${tempDir.path}/photo-sets');
+        await photoSetsDir.create(recursive: true);
 
-      final otherDir = Directory('${photoSetsDir.path}/import-1000');
-      await otherDir.create(recursive: true);
-      File('${otherDir.path}/photo.jpg').writeAsBytesSync(<int>[1]);
+        final otherDir = Directory('${photoSetsDir.path}/import-1000');
+        await otherDir.create(recursive: true);
+        File('${otherDir.path}/photo.jpg').writeAsBytesSync(<int>[1]);
 
-      final appData = AppData.empty();
+        final appData = AppData.empty();
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: appData,
-      );
+        await StorageCleanup.run(documentsDirectory: tempDir, appData: appData);
 
-      expect(await otherDir.exists(), isTrue);
-      expect(
-        await File('${otherDir.path}/photo.jpg').exists(),
-        isTrue,
-      );
-    });
+        expect(await otherDir.exists(), isTrue);
+        expect(await File('${otherDir.path}/photo.jpg').exists(), isTrue);
+      },
+    );
 
-    test('does not delete unknown directories even when unreferenced',
-        () async {
-      final photoSetsDir = Directory('${tempDir.path}/photo-sets');
-      await photoSetsDir.create(recursive: true);
+    test(
+      'does not delete unknown directories even when unreferenced',
+      () async {
+        final photoSetsDir = Directory('${tempDir.path}/photo-sets');
+        await photoSetsDir.create(recursive: true);
 
-      final unknownDir = Directory('${photoSetsDir.path}/share-2000');
-      await unknownDir.create(recursive: true);
-      File('${unknownDir.path}/photo.jpg').writeAsBytesSync(<int>[1]);
+        final unknownDir = Directory('${photoSetsDir.path}/share-2000');
+        await unknownDir.create(recursive: true);
+        File('${unknownDir.path}/photo.jpg').writeAsBytesSync(<int>[1]);
 
-      final appData = AppData.empty();
+        final appData = AppData.empty();
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: appData,
-      );
+        await StorageCleanup.run(documentsDirectory: tempDir, appData: appData);
 
-      expect(await unknownDir.exists(), isTrue);
-      expect(
-        await File('${unknownDir.path}/photo.jpg').exists(),
-        isTrue,
-      );
-    });
+        expect(await unknownDir.exists(), isTrue);
+        expect(await File('${unknownDir.path}/photo.jpg').exists(), isTrue);
+      },
+    );
   });
 
   group('orphan photo cleanup', () {
@@ -307,18 +295,11 @@ void main() {
 
       final appData = AppData.empty().copyWith(
         trips: <Trip>[
-          Trip(
-            id: 't1',
-            title: 'Trip',
-            photos: <File>[keptFile],
-          ),
+          Trip(id: 't1', title: 'Trip', photos: <Photo>[photoOf(keptFile)]),
         ],
       );
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: appData,
-      );
+      await StorageCleanup.run(documentsDirectory: tempDir, appData: appData);
 
       expect(await orphanFile.exists(), isFalse);
       expect(await keptFile.exists(), isTrue);
@@ -335,242 +316,227 @@ void main() {
 
       final appData = AppData.empty().copyWith(
         trips: <Trip>[
-          Trip(
-            id: 't1',
-            title: 'Trip',
-            photos: <File>[photoFile],
-          ),
+          Trip(id: 't1', title: 'Trip', photos: <Photo>[photoOf(photoFile)]),
         ],
       );
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: appData,
-      );
+      await StorageCleanup.run(documentsDirectory: tempDir, appData: appData);
 
       expect(await photoFile.exists(), isTrue);
     });
 
-    test('deletes orphan photos in documents/photos/ not referenced by AppData',
-        () async {
-      final photosDir = Directory('${tempDir.path}/photos');
-      await photosDir.create(recursive: true);
+    test(
+      'deletes orphan photos in documents/photos/ not referenced by AppData',
+      () async {
+        final photosDir = Directory('${tempDir.path}/photos');
+        await photosDir.create(recursive: true);
 
-      final orphanFile = File('${photosDir.path}/orphan.jpg');
-      orphanFile.writeAsBytesSync(<int>[1]);
-      final keptFile = File('${photosDir.path}/kept.jpg');
-      keptFile.writeAsBytesSync(<int>[2]);
+        final orphanFile = File('${photosDir.path}/orphan.jpg');
+        orphanFile.writeAsBytesSync(<int>[1]);
+        final keptFile = File('${photosDir.path}/kept.jpg');
+        keptFile.writeAsBytesSync(<int>[2]);
 
-      final appData = AppData.empty().copyWith(
-        trips: <Trip>[
-          Trip(
-            id: 't1',
-            title: 'Trip',
-            photos: <File>[keptFile],
-          ),
-        ],
-      );
+        final appData = AppData.empty().copyWith(
+          trips: <Trip>[
+            Trip(id: 't1', title: 'Trip', photos: <Photo>[photoOf(keptFile)]),
+          ],
+        );
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: appData,
-      );
+        await StorageCleanup.run(documentsDirectory: tempDir, appData: appData);
 
-      expect(await orphanFile.exists(), isFalse);
-      expect(await keptFile.exists(), isTrue);
-    });
+        expect(await orphanFile.exists(), isFalse);
+        expect(await keptFile.exists(), isTrue);
+      },
+    );
 
-    test('keeps photos in documents/photos/ that are referenced by AppData',
-        () async {
-      final photosDir = Directory('${tempDir.path}/photos');
-      await photosDir.create(recursive: true);
+    test(
+      'keeps photos in documents/photos/ that are referenced by AppData',
+      () async {
+        final photosDir = Directory('${tempDir.path}/photos');
+        await photosDir.create(recursive: true);
 
-      final photoFile = File('${photosDir.path}/trip-photo.jpg');
-      photoFile.writeAsBytesSync(<int>[1]);
+        final photoFile = File('${photosDir.path}/trip-photo.jpg');
+        photoFile.writeAsBytesSync(<int>[1]);
 
-      final appData = AppData.empty().copyWith(
-        trips: <Trip>[
-          Trip(
-            id: 't1',
-            title: 'Trip',
-            photos: <File>[photoFile],
-          ),
-        ],
-      );
+        final appData = AppData.empty().copyWith(
+          trips: <Trip>[
+            Trip(id: 't1', title: 'Trip', photos: <Photo>[photoOf(photoFile)]),
+          ],
+        );
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: appData,
-      );
+        await StorageCleanup.run(documentsDirectory: tempDir, appData: appData);
 
-      expect(await photoFile.exists(), isTrue);
-    });
+        expect(await photoFile.exists(), isTrue);
+      },
+    );
 
-    test('does not delete photos in documents/photos/ when AppData is empty',
-        () async {
-      final photosDir = Directory('${tempDir.path}/photos');
-      await photosDir.create(recursive: true);
+    test(
+      'does not delete photos in documents/photos/ when AppData is empty',
+      () async {
+        final photosDir = Directory('${tempDir.path}/photos');
+        await photosDir.create(recursive: true);
 
-      final photoFile = File('${photosDir.path}/some-photo.jpg');
-      photoFile.writeAsBytesSync(<int>[1]);
+        final photoFile = File('${photosDir.path}/some-photo.jpg');
+        photoFile.writeAsBytesSync(<int>[1]);
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: AppData.empty(),
-      );
+        await StorageCleanup.run(
+          documentsDirectory: tempDir,
+          appData: AppData.empty(),
+        );
 
-      expect(await photoFile.exists(), isFalse);
-    });
+        expect(await photoFile.exists(), isFalse);
+      },
+    );
 
-    test('handles mixed referenced and unreferenced photos in documents/photos/',
-        () async {
-      final photosDir = Directory('${tempDir.path}/photos');
-      await photosDir.create(recursive: true);
+    test(
+      'handles mixed referenced and unreferenced photos in documents/photos/',
+      () async {
+        final photosDir = Directory('${tempDir.path}/photos');
+        await photosDir.create(recursive: true);
 
-      final orphanFile = File('${photosDir.path}/orphan.jpg');
-      orphanFile.writeAsBytesSync(<int>[1]);
-      final keptFile = File('${photosDir.path}/kept.jpg');
-      keptFile.writeAsBytesSync(<int>[2]);
-      final anotherOrphan = File('${photosDir.path}/another-orphan.jpg');
-      anotherOrphan.writeAsBytesSync(<int>[3]);
+        final orphanFile = File('${photosDir.path}/orphan.jpg');
+        orphanFile.writeAsBytesSync(<int>[1]);
+        final keptFile = File('${photosDir.path}/kept.jpg');
+        keptFile.writeAsBytesSync(<int>[2]);
+        final anotherOrphan = File('${photosDir.path}/another-orphan.jpg');
+        anotherOrphan.writeAsBytesSync(<int>[3]);
 
-      final appData = AppData.empty().copyWith(
-        trips: <Trip>[
-          Trip(
-            id: 't1',
-            title: 'Trip',
-            photos: <File>[keptFile],
-          ),
-        ],
-      );
+        final appData = AppData.empty().copyWith(
+          trips: <Trip>[
+            Trip(id: 't1', title: 'Trip', photos: <Photo>[photoOf(keptFile)]),
+          ],
+        );
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: appData,
-      );
+        await StorageCleanup.run(documentsDirectory: tempDir, appData: appData);
 
-      expect(await orphanFile.exists(), isFalse);
-      expect(await keptFile.exists(), isTrue);
-      expect(await anotherOrphan.exists(), isFalse);
-    });
+        expect(await orphanFile.exists(), isFalse);
+        expect(await keptFile.exists(), isTrue);
+        expect(await anotherOrphan.exists(), isFalse);
+      },
+    );
 
-    test('handles Windows-style paths in AppData references for photos/',
-        () async {
-      final photosDir = Directory('${tempDir.path}/photos');
-      await photosDir.create(recursive: true);
+    test(
+      'handles Windows-style paths in AppData references for photos/',
+      () async {
+        final photosDir = Directory('${tempDir.path}/photos');
+        await photosDir.create(recursive: true);
 
-      final photoFile = File('${photosDir.path}/trip-photo.jpg');
-      photoFile.writeAsBytesSync(<int>[1]);
+        final photoFile = File('${photosDir.path}/trip-photo.jpg');
+        photoFile.writeAsBytesSync(<int>[1]);
 
-      final backslashPath = photoFile.path.replaceAll('/', '\\');
+        final backslashPath = photoFile.path.replaceAll('/', '\\');
 
-      final appData = AppData.empty().copyWith(
-        trips: <Trip>[
-          Trip(
-            id: 't1',
-            title: 'Trip',
-            photos: <File>[File(backslashPath)],
-          ),
-        ],
-      );
+        final appData = AppData.empty().copyWith(
+          trips: <Trip>[
+            Trip(
+              id: 't1',
+              title: 'Trip',
+              photos: <Photo>[photoOf(File(backslashPath))],
+            ),
+          ],
+        );
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: appData,
-      );
+        await StorageCleanup.run(documentsDirectory: tempDir, appData: appData);
 
-      expect(await photoFile.exists(), isTrue);
-    });
+        expect(await photoFile.exists(), isTrue);
+      },
+    );
   });
 
   group('deletion failure resilience', () {
-    test('does not throw when deletion fails and continues with other targets',
-        () async {
-      final stagingDir = Directory('${tempDir.path}/backup-staging');
-      await stagingDir.create(recursive: true);
+    test(
+      'does not throw when deletion fails and continues with other targets',
+      () async {
+        final stagingDir = Directory('${tempDir.path}/backup-staging');
+        await stagingDir.create(recursive: true);
 
-      final staleDir1 = Directory('${stagingDir.path}/0');
-      await staleDir1.create(recursive: true);
-      final staleDir2 = Directory('${stagingDir.path}/1');
-      await staleDir2.create(recursive: true);
+        final staleDir1 = Directory('${stagingDir.path}/0');
+        await staleDir1.create(recursive: true);
+        final staleDir2 = Directory('${stagingDir.path}/1');
+        await staleDir2.create(recursive: true);
 
-      var deleteCallCount = 0;
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        deleteDirFn: (String path, {bool recursive = false}) async {
-          deleteCallCount += 1;
-          if (deleteCallCount == 1) {
-            throw FileSystemException('Permission denied', path);
-          }
-          await Directory(path).delete(recursive: recursive);
-        },
-      );
+        var deleteCallCount = 0;
+        await StorageCleanup.run(
+          documentsDirectory: tempDir,
+          deleteDirFn: (String path, {bool recursive = false}) async {
+            deleteCallCount += 1;
+            if (deleteCallCount == 1) {
+              throw FileSystemException('Permission denied', path);
+            }
+            await Directory(path).delete(recursive: recursive);
+          },
+        );
 
-      expect(await staleDir1.exists(), isTrue);
-      expect(await staleDir2.exists(), isFalse);
-    });
+        expect(await staleDir1.exists(), isTrue);
+        expect(await staleDir2.exists(), isFalse);
+      },
+    );
 
-    test('retry succeeds on second cleanup attempt after initial failure',
-        () async {
-      final stagingDir = Directory('${tempDir.path}/backup-staging');
-      await stagingDir.create(recursive: true);
+    test(
+      'retry succeeds on second cleanup attempt after initial failure',
+      () async {
+        final stagingDir = Directory('${tempDir.path}/backup-staging');
+        await stagingDir.create(recursive: true);
 
-      final staleDir = Directory('${stagingDir.path}/0');
-      await staleDir.create(recursive: true);
+        final staleDir = Directory('${stagingDir.path}/0');
+        await staleDir.create(recursive: true);
 
-      var deleteCallCount = 0;
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        deleteDirFn: (String path, {bool recursive = false}) async {
-          deleteCallCount += 1;
-          if (deleteCallCount == 1) {
-            throw FileSystemException('Permission denied', path);
-          }
-          await Directory(path).delete(recursive: recursive);
-        },
-      );
+        var deleteCallCount = 0;
+        await StorageCleanup.run(
+          documentsDirectory: tempDir,
+          deleteDirFn: (String path, {bool recursive = false}) async {
+            deleteCallCount += 1;
+            if (deleteCallCount == 1) {
+              throw FileSystemException('Permission denied', path);
+            }
+            await Directory(path).delete(recursive: recursive);
+          },
+        );
 
-      expect(await staleDir.exists(), isTrue);
-      expect(deleteCallCount, equals(1));
+        expect(await staleDir.exists(), isTrue);
+        expect(deleteCallCount, equals(1));
 
-      deleteCallCount = 0;
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        deleteDirFn: (String path, {bool recursive = false}) async {
-          deleteCallCount += 1;
-          await Directory(path).delete(recursive: recursive);
-        },
-      );
+        deleteCallCount = 0;
+        await StorageCleanup.run(
+          documentsDirectory: tempDir,
+          deleteDirFn: (String path, {bool recursive = false}) async {
+            deleteCallCount += 1;
+            await Directory(path).delete(recursive: recursive);
+          },
+        );
 
-      expect(deleteCallCount, equals(1));
-      expect(await staleDir.exists(), isFalse);
-    });
+        expect(deleteCallCount, equals(1));
+        expect(await staleDir.exists(), isFalse);
+      },
+    );
 
-    test('one deletion failure does not prevent other deletions from succeeding',
-        () async {
-      final stagingDir = Directory('${tempDir.path}/backup-staging');
-      await stagingDir.create(recursive: true);
+    test(
+      'one deletion failure does not prevent other deletions from succeeding',
+      () async {
+        final stagingDir = Directory('${tempDir.path}/backup-staging');
+        await stagingDir.create(recursive: true);
 
-      final staleDir1 = Directory('${stagingDir.path}/0');
-      await staleDir1.create(recursive: true);
-      final staleDir2 = Directory('${stagingDir.path}/1');
-      await staleDir2.create(recursive: true);
+        final staleDir1 = Directory('${stagingDir.path}/0');
+        await staleDir1.create(recursive: true);
+        final staleDir2 = Directory('${stagingDir.path}/1');
+        await staleDir2.create(recursive: true);
 
-      var deleteCallCount = 0;
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        deleteDirFn: (String path, {bool recursive = false}) async {
-          deleteCallCount += 1;
-          if (deleteCallCount == 1) {
-            throw FileSystemException('Permission denied', path);
-          }
-          await Directory(path).delete(recursive: recursive);
-        },
-      );
+        var deleteCallCount = 0;
+        await StorageCleanup.run(
+          documentsDirectory: tempDir,
+          deleteDirFn: (String path, {bool recursive = false}) async {
+            deleteCallCount += 1;
+            if (deleteCallCount == 1) {
+              throw FileSystemException('Permission denied', path);
+            }
+            await Directory(path).delete(recursive: recursive);
+          },
+        );
 
-      expect(await staleDir1.exists(), isTrue);
-      expect(await staleDir2.exists(), isFalse);
-    });
+        expect(await staleDir1.exists(), isTrue);
+        expect(await staleDir2.exists(), isFalse);
+      },
+    );
 
     test('staging directory deletion failure is retried on next run', () async {
       final stagingDir = Directory('${tempDir.path}/backup-staging');
@@ -617,11 +583,7 @@ void main() {
 
       final appData = AppData.empty().copyWith(
         trips: <Trip>[
-          Trip(
-            id: 't1',
-            title: 'Trip',
-            photos: <File>[keptFile],
-          ),
+          Trip(id: 't1', title: 'Trip', photos: <Photo>[photoOf(keptFile)]),
         ],
       );
 
@@ -659,15 +621,12 @@ void main() {
           Trip(
             id: 't1',
             title: 'Trip',
-            photos: <File>[File(backslashPath)],
+            photos: <Photo>[photoOf(File(backslashPath))],
           ),
         ],
       );
 
-      await StorageCleanup.run(
-        documentsDirectory: tempDir,
-        appData: appData,
-      );
+      await StorageCleanup.run(documentsDirectory: tempDir, appData: appData);
 
       expect(await photoFile.exists(), isTrue);
     });
@@ -691,7 +650,9 @@ void main() {
     test('handles empty AppData without deleting everything', () async {
       final photoSetsDir = Directory('${tempDir.path}/photo-sets');
       await photoSetsDir.create(recursive: true);
-      Directory('${photoSetsDir.path}/restore-6000').createSync(recursive: true);
+      Directory(
+        '${photoSetsDir.path}/restore-6000',
+      ).createSync(recursive: true);
 
       await StorageCleanup.run(
         documentsDirectory: tempDir,

@@ -143,7 +143,7 @@ extension _HomeDataActions on _HomePageState {
           );
         } else {
           next = _data.copyWith(
-            unassignedPhotos: <File>[..._data.unassignedPhotos, ...copied],
+            unassignedPhotos: <Photo>[..._data.unassignedPhotos, ...copied],
           );
         }
 
@@ -166,11 +166,11 @@ extension _HomeDataActions on _HomePageState {
     }
   }
 
-  Future<List<File>> _copySharedFiles(List<String> paths) async {
+  Future<List<Photo>> _copySharedFiles(List<String> paths) async {
     final directory = await getApplicationDocumentsDirectory();
     final photosDirectory = Directory('${directory.path}/photos');
     await photosDirectory.create(recursive: true);
-    final copied = <File>[];
+    final copied = <Photo>[];
     try {
       for (var index = 0; index < paths.length; index++) {
         final source = File(paths[index]);
@@ -178,7 +178,18 @@ extension _HomeDataActions on _HomePageState {
         final destination = File(
           '${photosDirectory.path}/${createEntityId('shared')}-${index.toString().padLeft(3, '0')}${_safeExtension(source.path)}',
         );
-        copied.add(await source.copy(destination.path));
+        final copiedFile = await source.copy(destination.path);
+        // 撮影日時は不明のためnull。ファイル更新日時を撮影日時として
+        // 永続化してはならない（推測日時の保存禁止）。
+        copied.add(
+          Photo(
+            id: createPhotoId(),
+            file: copiedFile,
+            capturedAt: null,
+            originalName: _originalNameOfPath(source.path),
+            mimeType: _mimeTypeOf(source.path),
+          ),
+        );
       }
       return copied;
     } catch (_) {
@@ -246,25 +257,58 @@ extension _HomeDataActions on _HomePageState {
     }
   }
 
-  Future<List<File>> _copyPickedImages(List<XFile> selected) async {
+  Future<List<Photo>> _copyPickedImages(List<XFile> selected) async {
     final directory = await getApplicationDocumentsDirectory();
     final photosDirectory = Directory('${directory.path}/photos');
     await photosDirectory.create(recursive: true);
-    final copied = <File>[];
+    final copied = <Photo>[];
     try {
       for (var index = 0; index < selected.length; index++) {
         final image = selected[index];
+        final source = File(image.path);
         final safeName = image.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
         final destination = File(
           '${photosDirectory.path}/${createEntityId('photo')}-${index.toString().padLeft(3, '0')}-$safeName',
         );
-        copied.add(await File(image.path).copy(destination.path));
+        final copiedFile = await source.copy(destination.path);
+        // 撮影日時は不明のためnull。ファイル更新日時を撮影日時として
+        // 永続化してはならない（推測日時の保存禁止）。
+        copied.add(
+          Photo(
+            id: createPhotoId(),
+            file: copiedFile,
+            capturedAt: null,
+            originalName: image.name,
+            mimeType: _mimeTypeOf(image.path),
+          ),
+        );
       }
       return copied;
     } catch (_) {
       await _deleteFiles(copied);
       rethrow;
     }
+  }
+
+  String? _mimeTypeOf(String path) {
+    final fileName = path.split(RegExp(r'[/\\]')).last;
+    final separator = fileName.lastIndexOf('.');
+    if (separator < 0) return null;
+    return switch (fileName.substring(separator + 1).toLowerCase()) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'png' => 'image/png',
+      'gif' => 'image/gif',
+      'webp' => 'image/webp',
+      'bmp' => 'image/bmp',
+      'heic' => 'image/heic',
+      'heif' => 'image/heif',
+      _ => null,
+    };
+  }
+
+  String? _originalNameOfPath(String path) {
+    final fileName = path.split(RegExp(r'[/\\]')).last;
+    return fileName.isEmpty ? null : fileName;
   }
 
   Future<void> _handleTripMenu(Trip trip, String action) async {

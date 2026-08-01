@@ -16,6 +16,67 @@ final List<int> _pngBytes = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
 );
 
+/// 共有取り込みの保存完了を期限付きでポーリングする。
+///
+/// [documentsDir] 直下へコピーされた写真のレコードが、保存JSON内の旅行に
+/// 含まれるまで待つ。書き込み途中の一時的な失敗（空文字列、デコード失敗、
+/// レコード未反映）は期限まで再試行し、最後に発生した例外をタイムアウト時の
+/// 失敗メッセージに含める。
+Future<Map<String, dynamic>?> _waitForImportedPhotoJson(
+  String documentsDir, {
+  required Duration timeout,
+}) async {
+  final preferences = await SharedPreferences.getInstance();
+  final deadline = DateTime.now().add(timeout);
+  const interval = Duration(milliseconds: 50);
+  Object? lastError;
+  String? lastRaw;
+  Map<String, dynamic>? lastDecoded;
+  while (DateTime.now().isBefore(deadline)) {
+    try {
+      lastRaw = preferences.getString(TripStore.dataKey);
+      if (lastRaw == null || lastRaw.isEmpty) {
+        lastError = StateError('保存データがまだ書き込まれていません');
+      } else {
+        lastDecoded = jsonDecode(lastRaw) as Map<String, dynamic>;
+        final photo = _findCopiedPhoto(lastDecoded, documentsDir);
+        if (photo != null) return lastDecoded;
+        lastError = StateError('取り込まれた写真レコードが見つかりません');
+      }
+    } on FormatException catch (error) {
+      lastError = error;
+    }
+    await Future<void>.delayed(interval);
+  }
+  fail(
+    '共有取り込みの保存完了をタイムアウトしました。'
+    '上限: $timeout。確認対象JSON: ${TripStore.dataKey}。'
+    '最終エラー: $lastError。最終JSON: $lastRaw',
+  );
+}
+
+/// 保存JSONから [documentsDir] 直下へコピーされた写真レコードを探す。
+Map<String, dynamic>? _findCopiedPhoto(
+  Map<String, dynamic> decoded,
+  String documentsDir,
+) {
+  final trips = decoded['trips'];
+  if (trips is! List) return null;
+  for (final trip in trips) {
+    if (trip is! Map) continue;
+    final photos = trip['photos'];
+    if (photos is! List) continue;
+    for (final photo in photos) {
+      if (photo is! Map) continue;
+      final path = photo['path'];
+      if (path is String && path.startsWith(documentsDir)) {
+        return Map<String, dynamic>.from(photo);
+      }
+    }
+  }
+  return null;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('com.kaenozu.kokoitta/share');
@@ -48,7 +109,7 @@ void main() {
       TripStore.dataKey: jsonEncode(<String, Object>{
         'schemaVersion': TripStore.schemaVersion,
         'trips': trips,
-        'unassignedPhotos': <String>[],
+        'unassignedPhotos': <Object>[],
         'prefectureStates': <String, String>{},
       }),
     });
@@ -58,7 +119,14 @@ void main() {
       <String, Object>{
         'id': id,
         'title': 'テスト旅行 $id',
-        'photos': photos.map((file) => file.path).toList(growable: false),
+        'photos': photos
+            .map(
+              (file) => <String, Object>{
+                'id': TripStore.legacyPhotoId(file.path),
+                'path': file.path,
+              },
+            )
+            .toList(growable: false),
       };
 
   setUp(() {
@@ -270,5 +338,78 @@ void main() {
     final builtImages = tester.widgetList(gridImageFinder).length;
     expect(builtImages, greaterThan(0));
     expect(builtImages, lessThan(300));
+  });
+
+  testWidgets('共有からの取り込みでファイル更新日時が撮影日時に保存されない', (tester) async {
+    late Directory documentsDir;
+    late File source;
+    await tester.runAsync(() async {
+      source = File('${photoDirectory.path}/shared_source.jpg');
+      await source.writeAsBytes(_pngBytes);
+      final oldModified = DateTime(2000, 1, 1, 0, 0);
+      await source.setLastModified(oldModified);
+      documentsDir = await Directory.systemTemp.createTemp('kokoitta-doc-dir');
+    });
+    addTearDown(() async {
+      await tester.runAsync(() async {
+        try {
+          await documentsDir.delete(recursive: true);
+        } on FileSystemException {
+          // ベストエフォートで後始末する。
+        }
+      });
+    });
+    const pathChannel = MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathChannel, (call) async {
+          if (call.method == 'getApplicationDocumentsDirectory') {
+            return documentsDir.path;
+          }
+          return null;
+        });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathChannel, null);
+    });
+
+    // 共有チャネルが取り込み対象ファイルを返すよう上書きする。
+    // 開始前に一時停止し、スタートアップのStorageCleanupが photos/ 配下を
+    // 走査し終えるのを待つ。取り込み中のコピー先をorphanと誤判定して
+    // 削除する競合（コピー失敗 → 取り込み不成立）を避けるため。
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getSharedUris') {
+            await Future<void>.delayed(const Duration(seconds: 3));
+            return <String, dynamic>{
+              'successes': <Map<String, dynamic>>[
+                <String, dynamic>{'path': source.path},
+              ],
+              'overLimitCount': 0,
+              'failures': <Map<String, dynamic>>[],
+            };
+          }
+          return null;
+        });
+
+    Map<String, dynamic>? stored;
+    await tester.runAsync(() async {
+      await tester.pumpWidget(const KokoittaApp());
+      // 実I/O（ファイルコピー・削除・保存）の完了を実時間で待つ。
+      // 保存完了はポーリングで検出し、タイミング非依存にする。
+      stored = await _waitForImportedPhotoJson(
+        documentsDir.path,
+        timeout: const Duration(seconds: 20),
+      );
+    });
+    await tester.pumpAndSettle();
+    // 実I/Oの完了を待つ間にFlutter側へ例外が漏れていないこと。
+    expect(tester.takeException(), isNull);
+    final trips = stored!['trips'] as List;
+    final storedPhoto =
+        ((trips).single['photos'] as List).single as Map<String, dynamic>;
+    // ソースファイルの更新日時（2000年）がcapturedAtとして永続化されてはならない。
+    expect(storedPhoto.containsKey('capturedAt'), isFalse);
+    expect(storedPhoto['id'], isA<String>());
+    expect(storedPhoto['path'], isA<String>());
   });
 }

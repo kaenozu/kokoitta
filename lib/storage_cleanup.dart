@@ -6,10 +6,8 @@ import 'package:path_provider/path_provider.dart';
 import 'models.dart';
 
 typedef DeleteFileFn = Future<void> Function(String path);
-typedef DeleteDirFn = Future<void> Function(
-  String path, {
-  required bool recursive,
-});
+typedef DeleteDirFn =
+    Future<void> Function(String path, {required bool recursive});
 
 class StorageCleanup {
   const StorageCleanup();
@@ -29,11 +27,13 @@ class StorageCleanup {
     DeleteFileFn? deleteFileFn,
     DeleteDirFn? deleteDirFn,
   }) async {
-    final deleteFile = deleteFileFn ??
+    final deleteFile =
+        deleteFileFn ??
         (String path) async {
           await File(path).delete();
         };
-    final deleteDirectory = deleteDirFn ??
+    final deleteDirectory =
+        deleteDirFn ??
         (String path, {required bool recursive}) async {
           await Directory(path).delete(recursive: recursive);
         };
@@ -68,13 +68,16 @@ class StorageCleanup {
     final backupsDir = Directory('${directory.path}/backups');
     if (!await backupsDir.exists()) return;
 
-    final files = _listFiles(backupsDir)
-        .where((file) => _backupFileNamePattern.hasMatch(_basename(file.path)))
-        .toList()
-      ..sort(
-        (a, b) =>
-            _extractTimestamp(b.path).compareTo(_extractTimestamp(a.path)),
-      );
+    final files =
+        _listFiles(backupsDir)
+            .where(
+              (file) => _backupFileNamePattern.hasMatch(_basename(file.path)),
+            )
+            .toList()
+          ..sort(
+            (a, b) =>
+                _extractTimestamp(b.path).compareTo(_extractTimestamp(a.path)),
+          );
 
     for (final file in files.skip(_maxManualBackups)) {
       await _tryDeleteFile(file, deleteFile, label: 'backup');
@@ -88,13 +91,16 @@ class StorageCleanup {
     final snapshotsDir = Directory('${directory.path}/safety-backups');
     if (!await snapshotsDir.exists()) return;
 
-    final files = _listFiles(snapshotsDir)
-        .where((file) => _backupFileNamePattern.hasMatch(_basename(file.path)))
-        .toList()
-      ..sort(
-        (a, b) =>
-            _extractTimestamp(b.path).compareTo(_extractTimestamp(a.path)),
-      );
+    final files =
+        _listFiles(snapshotsDir)
+            .where(
+              (file) => _backupFileNamePattern.hasMatch(_basename(file.path)),
+            )
+            .toList()
+          ..sort(
+            (a, b) =>
+                _extractTimestamp(b.path).compareTo(_extractTimestamp(a.path)),
+          );
 
     for (final file in files.skip(_maxSafetySnapshots)) {
       await _tryDeleteFile(file, deleteFile, label: 'safety snapshot');
@@ -143,12 +149,14 @@ class StorageCleanup {
     if (!await photoSetsDir.exists()) return;
 
     final referencedRestoreDirectories = <String>{};
-    for (final file in appData.allPhotos) {
-      final normalized = _normalizePath(file.path);
+    for (final photo in appData.allPhotos) {
+      final normalized = _normalizePath(photo.file.path);
       final markerIndex = normalized.indexOf('/photo-sets/');
       if (markerIndex < 0) continue;
 
-      final relative = normalized.substring(markerIndex + '/photo-sets/'.length);
+      final relative = normalized.substring(
+        markerIndex + '/photo-sets/'.length,
+      );
       final firstSegment = relative.split('/').first;
       if (!firstSegment.startsWith(_restoreDirPrefix)) continue;
 
@@ -181,7 +189,7 @@ class StorageCleanup {
     DeleteFileFn deleteFile,
   ) async {
     final referencedPaths = <String>{
-      for (final file in appData.allPhotos) _normalizePath(file.path),
+      for (final photo in appData.allPhotos) _normalizePath(photo.file.path),
     };
 
     final photoSetsDir = Directory('${directory.path}/photo-sets');

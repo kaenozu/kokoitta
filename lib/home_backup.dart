@@ -134,9 +134,10 @@ extension _HomeBackupActions on _HomePageState {
     }
   }
 
-  Future<void> _shareFiles(List<File> photos, String title) async {
+  Future<void> _shareFiles(List<Photo> photos, String title) async {
     final files = <XFile>[];
-    for (final file in photos) {
+    for (final photo in photos) {
+      final file = photo.file;
       if (await file.exists()) files.add(XFile(file.path));
     }
     if (files.isEmpty) {
@@ -182,9 +183,10 @@ extension _HomeBackupActions on _HomePageState {
         false;
   }
 
-  Future<int> _deleteFiles(Iterable<File> files) async {
+  Future<int> _deleteFiles(Iterable<Photo> photos) async {
     var failures = 0;
-    for (final file in files) {
+    for (final photo in photos) {
+      final file = photo.file;
       try {
         if (await file.exists()) await file.delete();
       } catch (_) {

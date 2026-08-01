@@ -419,7 +419,7 @@ extension _HomeView on _HomePageState {
     );
   }
 
-  Widget _photoPreview(List<File> photos) {
+  Widget _photoPreview(List<Photo> photos) {
     if (photos.isEmpty) {
       return const Center(child: Icon(Icons.landscape, size: 48));
     }
@@ -431,7 +431,7 @@ extension _HomeView on _HomePageState {
           devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
         );
         return Image.file(
-          photos.first,
+          photos.first.file,
           width: double.infinity,
           fit: BoxFit.cover,
           cacheWidth: dimension,
@@ -518,7 +518,7 @@ extension _HomeView on _HomePageState {
     );
   }
 
-  Widget _photoGrid(List<File> photos) {
+  Widget _photoGrid(List<Photo> photos) {
     if (photos.isEmpty) return const Center(child: Text('写真がありません'));
     return GridView.builder(
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -540,7 +540,7 @@ extension _HomeView on _HomePageState {
                 devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
               );
               return Image.file(
-                photos[index],
+                photos[index].file,
                 fit: BoxFit.cover,
                 cacheWidth: dimension,
                 errorBuilder: (_, _, _) => const ColoredBox(
@@ -557,7 +557,7 @@ extension _HomeView on _HomePageState {
 }
 
 extension _PhotoViewerActions on _HomePageState {
-  void _showPhotoViewer(List<File> photos, int initialIndex) {
+  void _showPhotoViewer(List<Photo> photos, int initialIndex) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
@@ -571,7 +571,7 @@ extension _PhotoViewerActions on _HomePageState {
 class _PhotoViewer extends StatefulWidget {
   const _PhotoViewer({required this.photos, required this.initialIndex});
 
-  final List<File> photos;
+  final List<Photo> photos;
   final int initialIndex;
 
   @override
@@ -601,7 +601,7 @@ class _PhotoViewerState extends State<_PhotoViewer> {
           maxScale: 4,
           child: Center(
             child: Image.file(
-              widget.photos[index],
+              widget.photos[index].file,
               fit: BoxFit.contain,
               errorBuilder: (_, _, _) =>
                   const Icon(Icons.broken_image_outlined, size: 72),

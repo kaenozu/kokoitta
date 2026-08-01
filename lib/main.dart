@@ -13,6 +13,7 @@ import 'backup_service.dart';
 import 'models.dart';
 import 'offline_japan_map.dart';
 import 'operation_coordinator.dart';
+import 'photo.dart';
 import 'storage_cleanup.dart';
 import 'trip_store.dart';
 import 'validators.dart';

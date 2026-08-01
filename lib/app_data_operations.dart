@@ -1,29 +1,32 @@
-import 'dart:io';
-
 import 'models.dart';
+import 'photo.dart';
 import 'validators.dart';
 
 AppData addNewTrip(AppData data, Trip trip) {
   return data.copyWith(trips: <Trip>[...data.trips, trip]);
 }
 
-AppData addPhotosToTrip(AppData data, String tripId, List<File> photos) {
+AppData addPhotosToTrip(AppData data, String tripId, List<Photo> photos) {
   var found = false;
-  final trips = data.trips.map((trip) {
-    if (trip.id != tripId) return trip;
-    found = true;
-    return trip.copyWith(photos: <File>[...trip.photos, ...photos]);
-  }).toList(growable: false);
+  final trips = data.trips
+      .map((trip) {
+        if (trip.id != tripId) return trip;
+        found = true;
+        return trip.copyWith(photos: <Photo>[...trip.photos, ...photos]);
+      })
+      .toList(growable: false);
   if (!found) throw StateError('追加先の旅行が見つかりません');
   return data.copyWith(trips: trips);
 }
 
 AppData moveTripToUnassigned(AppData data, String tripId) {
-  final trip = data.trips.where((candidate) => candidate.id == tripId).firstOrNull;
+  final trip = data.trips
+      .where((candidate) => candidate.id == tripId)
+      .firstOrNull;
   if (trip == null) throw StateError('移動する旅行が見つかりません');
   return data.copyWith(
     trips: data.trips.where((candidate) => candidate.id != tripId).toList(),
-    unassignedPhotos: <File>[...data.unassignedPhotos, ...trip.photos],
+    unassignedPhotos: <Photo>[...data.unassignedPhotos, ...trip.photos],
   );
 }
 
@@ -42,15 +45,11 @@ AppData createTripFromUnassigned(AppData data, Trip trip) {
   }
   return data.copyWith(
     trips: <Trip>[...data.trips, trip],
-    unassignedPhotos: const <File>[],
+    unassignedPhotos: const <Photo>[],
   );
 }
 
-AppData updatePrefectureState(
-  AppData data,
-  String prefecture,
-  String state,
-) {
+AppData updatePrefectureState(AppData data, String prefecture, String state) {
   if (!validPrefectures.contains(prefecture)) {
     return data;
   }
