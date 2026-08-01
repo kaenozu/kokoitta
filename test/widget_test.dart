@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/image_decode.dart';
 import 'package:kokoitta_app/main.dart';
+import 'package:kokoitta_app/models.dart';
 import 'package:kokoitta_app/operation_coordinator.dart';
+import 'package:kokoitta_app/storage_cleanup.dart';
 import 'package:kokoitta_app/trip_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -15,6 +17,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 final List<int> _pngBytes = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
 );
+
+/// 起動時cleanupの代わりに即完了するfake runner。
+///
+/// cleanup本体の検証はcleanup_serialization_test.dartと共有取り込みテストが
+/// 担う。ここでは実ファイルI/O（fake-async環境で完了しない
+/// [StorageCleanup.run]）による `pumpAndSettle` のハングを避けるため、
+/// 注入する。
+Future<void> _noopCleanup(AppData data) async {}
 
 /// 共有取り込みの保存完了を期限付きでポーリングする。
 ///
@@ -146,7 +156,7 @@ void main() {
   });
 
   testWidgets('ホームに地図と旅行タブを表示する', (tester) async {
-    await tester.pumpWidget(const KokoittaApp());
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('ここいった'), findsOneWidget);
@@ -166,7 +176,7 @@ void main() {
   testWidgets('地図タップで状態を保存し再起動後も維持する', (tester) async {
     const hokkaidoKey = ValueKey<String>('prefecture-map-01');
 
-    await tester.pumpWidget(const KokoittaApp());
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
     await tester.pumpAndSettle();
 
     final hokkaido = find.byKey(hokkaidoKey);
@@ -179,29 +189,28 @@ void main() {
     await tester.tap(hokkaidoTapTarget);
     await tester.pumpAndSettle();
 
-    expect(
-      find.bySemanticsLabel(RegExp('北海道、訪問済み')),
-      findsOneWidget,
-    );
+    expect(find.bySemanticsLabel(RegExp('北海道、訪問済み')), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
-    await tester.pumpWidget(const KokoittaApp());
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
     await tester.pumpAndSettle();
 
     final restoredHokkaido = find.byKey(hokkaidoKey);
     await tester.ensureVisible(restoredHokkaido);
     await tester.pumpAndSettle();
-    expect(
-      find.bySemanticsLabel(RegExp('北海道、訪問済み')),
-      findsOneWidget,
-    );
+    expect(find.bySemanticsLabel(RegExp('北海道、訪問済み')), findsOneWidget);
   });
 
   testWidgets('busy中はデータ変更操作とバックアップメニューを無効化する', (tester) async {
     final coordinator = OperationCoordinator();
     await tester.pumpWidget(
-      MaterialApp(home: HomePage(operationCoordinator: coordinator)),
+      MaterialApp(
+        home: HomePage(
+          operationCoordinator: coordinator,
+          cleanupRunner: _noopCleanup,
+        ),
+      ),
     );
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 200));
@@ -246,7 +255,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2340);
     addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(const KokoittaApp());
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
     await tester.pumpAndSettle();
     await tester.tap(find.text('旅行'));
     await tester.pumpAndSettle();
@@ -272,7 +281,7 @@ void main() {
       tripRecord('trip-1', <File>[photoFiles[0], photoFiles[1], photoFiles[2]]),
     ]);
 
-    await tester.pumpWidget(const KokoittaApp());
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
     await tester.pumpAndSettle();
     await tester.tap(find.text('旅行'));
     await tester.pumpAndSettle();
@@ -302,7 +311,7 @@ void main() {
       tripRecord('trip-1', <File>[photoFiles[0]]),
     ]);
 
-    await tester.pumpWidget(const KokoittaApp());
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
     await tester.pumpAndSettle();
     await tester.tap(find.text('旅行'));
     await tester.pumpAndSettle();
@@ -324,7 +333,7 @@ void main() {
   testWidgets('300件の写真グリッドでも表示中Widgetのみ構築される', (tester) async {
     seedAppData(<Map<String, Object>>[tripRecord('trip-1', photoFiles)]);
 
-    await tester.pumpWidget(const KokoittaApp());
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
     await tester.pumpAndSettle();
     await tester.tap(find.text('旅行'));
     await tester.pumpAndSettle();
@@ -373,13 +382,11 @@ void main() {
     });
 
     // 共有チャネルが取り込み対象ファイルを返すよう上書きする。
-    // 開始前に一時停止し、スタートアップのStorageCleanupが photos/ 配下を
-    // 走査し終えるのを待つ。取り込み中のコピー先をorphanと誤判定して
-    // 削除する競合（コピー失敗 → 取り込み不成立）を避けるため。
+    // 起動時cleanupはOperationCoordinatorの同一キューで取り込みより先に
+    // 実行されるため、固定delayでcleanup完了を待つ必要はない。
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           if (call.method == 'getSharedUris') {
-            await Future<void>.delayed(const Duration(seconds: 3));
             return <String, dynamic>{
               'successes': <Map<String, dynamic>>[
                 <String, dynamic>{'path': source.path},
@@ -393,6 +400,8 @@ void main() {
 
     Map<String, dynamic>? stored;
     await tester.runAsync(() async {
+      // 実cleanupと共有取り込みが同一キューで直列化されることを確認するため、
+      // fake runnerではなく実際のKokoittaAppを使用する。
       await tester.pumpWidget(const KokoittaApp());
       // 実I/O（ファイルコピー・削除・保存）の完了を実時間で待つ。
       // 保存完了はポーリングで検出し、タイミング非依存にする。
@@ -411,5 +420,133 @@ void main() {
     expect(storedPhoto.containsKey('capturedAt'), isFalse);
     expect(storedPhoto['id'], isA<String>());
     expect(storedPhoto['path'], isA<String>());
+  });
+
+  testWidgets('起動時cleanupと共有取り込みは同一キューで直列化され、新規写真が残る', (tester) async {
+    late Directory documentsDir;
+    late File source;
+    final log = <String>[];
+
+    await tester.runAsync(() async {
+      source = File('${photoDirectory.path}/serialized_shared_source.jpg');
+      await source.writeAsBytes(_pngBytes);
+      documentsDir = await Directory.systemTemp.createTemp(
+        'kokoitta-doc-serialized',
+      );
+    });
+    addTearDown(() async {
+      await tester.runAsync(() async {
+        try {
+          await documentsDir.delete(recursive: true);
+        } on FileSystemException {
+          // ベストエフォートで後始末する。
+        }
+      });
+    });
+
+    const pathChannel = MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathChannel, (call) async {
+          if (call.method == 'getApplicationDocumentsDirectory') {
+            return documentsDir.path;
+          }
+          return null;
+        });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathChannel, null);
+    });
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getSharedUris') {
+            return <String, dynamic>{
+              'successes': <Map<String, dynamic>>[
+                <String, dynamic>{'path': source.path},
+              ],
+              'overLimitCount': 0,
+              'failures': <Map<String, dynamic>>[],
+            };
+          }
+          return null;
+        });
+
+    // cleanup本体の実I/O検証はcleanup_serialization_test.dartが担う。
+    // ここではキュー直列化の順序を検証するため、cleanup runner自身が
+    // 「実行時点の保存JSONに共有取り込みが含まれているか」を記録する。
+    // 取り込みがcleanupより先行していれば tripsAtStart が0にならない。
+    Future<void> cleanupRunner(AppData data) async {
+      log.add('cleanup:start');
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(TripStore.dataKey);
+      final decoded = jsonDecode(raw ?? '{}') as Map<String, dynamic>;
+      log.add(
+        'cleanup:tripsAtStart=${(decoded['trips'] as List? ?? []).length}',
+      );
+      log.add('cleanup:end');
+    }
+
+    Map<String, dynamic>? stored;
+    late String storedPath;
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        MaterialApp(home: HomePage(cleanupRunner: cleanupRunner)),
+      );
+      stored = await _waitForImportedPhotoJson(
+        documentsDir.path,
+        timeout: const Duration(seconds: 20),
+      );
+      final trips = stored!['trips'] as List;
+      final storedPhoto =
+          ((trips).single['photos'] as List).single as Map<String, dynamic>;
+      storedPath = storedPhoto['path'] as String;
+    });
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.takeException(), isNull);
+
+    // cleanupが共有取り込みより先に実行され、その時点では未保存だったこと。
+    expect(log, <String>[
+      'cleanup:start',
+      'cleanup:tripsAtStart=0',
+      'cleanup:end',
+    ]);
+
+    // cleanup完了後に取り込まれた新規写真が物理的に存在する。
+    await tester.runAsync(() async {
+      expect(await File(storedPath).exists(), isTrue);
+    });
+  });
+
+  testWidgets('起動時cleanup中にWidgetを破棄してもUI APIを操作せず例外を出さない', (tester) async {
+    final cleanupStarted = Completer<void>();
+    final releaseCleanup = Completer<void>();
+    final log = <String>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomePage(
+          cleanupRunner: (_) async {
+            log.add('cleanup:start');
+            cleanupStarted.complete();
+            await releaseCleanup.future;
+            log.add('cleanup:end');
+          },
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await cleanupStarted.future.timeout(const Duration(seconds: 10));
+
+    // cleanup実行中にWidgetを破棄する。
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+
+    releaseCleanup.complete();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(log, <String>['cleanup:start', 'cleanup:end']);
+    expect(tester.takeException(), isNull);
   });
 }

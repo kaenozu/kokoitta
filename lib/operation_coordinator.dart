@@ -6,6 +6,7 @@ enum OperationStatus {
   backup,
   restorePrepare,
   restoreConfirm,
+  cleanup,
   failed,
 }
 
@@ -17,6 +18,7 @@ class OperationCoordinator {
   bool _hasBackupQueued = false;
   bool _hasRestoreSession = false;
   bool _hasRestoreCommitQueued = false;
+  bool _hasCleanupQueued = false;
   bool _isDisposed = false;
 
   OperationStatus get status => _status;
@@ -25,16 +27,21 @@ class OperationCoordinator {
   bool get isBusy =>
       _pendingMutationCount > 0 ||
       _hasBackupQueued ||
+      _hasCleanupQueued ||
       _status == OperationStatus.mutating ||
       _status == OperationStatus.backup ||
       _status == OperationStatus.restorePrepare ||
-      _status == OperationStatus.restoreConfirm;
+      _status == OperationStatus.restoreConfirm ||
+      _status == OperationStatus.cleanup;
 
   bool get isRestoring =>
       _status == OperationStatus.restorePrepare ||
       _status == OperationStatus.restoreConfirm;
 
   bool get isBackingUp => _status == OperationStatus.backup;
+
+  bool get isCleanupRunning =>
+      _hasCleanupQueued || _status == OperationStatus.cleanup;
 
   Future<T> runMutation<T>(Future<T> Function() action) {
     _ensureNotDisposed();
@@ -68,6 +75,31 @@ class OperationCoordinator {
       action,
       onFinally: () {
         _hasBackupQueued = false;
+        _notifyStatus();
+      },
+    );
+  }
+
+  /// Storage cleanupを単一操作キューへ登録する。
+  ///
+  /// cleanupは写真ファイルを物理削除するため、写真を変更する全mutationと
+  /// 同一キューで直列化する。二重登録は [StateError] で拒否する。
+  /// 失敗時もキューは解放され、次の操作・次回起動のcleanupで再試行できる。
+  Future<T> runCleanup<T>(Future<T> Function() action) {
+    _ensureNotDisposed();
+    if (_hasCleanupQueued || _status == OperationStatus.cleanup) {
+      throw StateError('Cleanup already in progress');
+    }
+    if (_hasRestoreSession) {
+      throw StateError('Cannot cleanup during restore session');
+    }
+    _hasCleanupQueued = true;
+    _notifyStatus();
+    return _enqueue(
+      OperationStatus.cleanup,
+      action,
+      onFinally: () {
+        _hasCleanupQueued = false;
         _notifyStatus();
       },
     );
@@ -180,6 +212,7 @@ class OperationCoordinator {
     _hasBackupQueued = false;
     _hasRestoreSession = false;
     _hasRestoreCommitQueued = false;
+    _hasCleanupQueued = false;
     _statusController.close();
   }
 }

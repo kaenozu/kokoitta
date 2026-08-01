@@ -3,9 +3,14 @@ part of 'main.dart';
 extension _HomeDataActions on _HomePageState {
   Future<void> _runStartupCleanup() async {
     try {
-      await StorageCleanup.run(appData: _data);
+      // cleanupは写真ファイルを物理削除するため、写真を変更する全操作と
+      // 同一の操作キュー（OperationCoordinator）上で直列化する。
+      // actionはキュー実行時に評価されるため、実行時点の最新の確定済み
+      // AppDataを参照判定に使用する。
+      await _coordinator.runCleanup(() => _cleanupRunner(_data));
     } catch (_) {
       // Cleanup failures must not block application startup.
+      // キューは解放され、次回起動のcleanupで再試行される。
     }
   }
 
