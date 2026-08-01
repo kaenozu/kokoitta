@@ -443,6 +443,32 @@ void main() {
       expect(loaded.unassignedPhotos, hasLength(1));
       expect(loaded.unassignedPhotos.single.id, 'photo-existing');
     });
+
+    test('欠損ファイルは同一IDでも後続の実在写真をclaimしない', () async {
+      final missing = File('${temporaryDirectory.path}/missing-id.jpg');
+      final existing = await createPhotoFile('existing-same-id.jpg');
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        TripStore.dataKey: v3Raw(
+          trips: <Object>[
+            <String, Object>{
+              'id': 'trip-broken',
+              'title': ' ',
+              'photos': <Object>[
+                <String, Object>{'id': 'photo-shared', 'path': missing.path},
+                <String, Object>{'id': 'photo-shared', 'path': existing.path},
+              ],
+            },
+          ],
+        ),
+      });
+      final store = TripStore();
+
+      final loaded = await store.load();
+
+      expect(loaded.unassignedPhotos, hasLength(1));
+      expect(loaded.unassignedPhotos.single.id, 'photo-shared');
+      expect(loaded.unassignedPhotos.single.file.path, existing.path);
+    });
   });
 
   group('migration経路でも無効タイトルの写真を救済する', () {
@@ -549,6 +575,158 @@ void main() {
       final loaded = await store.load();
 
       expect(loaded.trips, isEmpty);
+      expect(loaded.unassignedPhotos, isEmpty);
+    });
+
+    test('intermediate: 無効タイトルが先でも有効旅行が同一写真を優先保持する', () async {
+      final photo = await createPhotoFile('intermediate-priority.jpg');
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        TripStore.intermediateTripsKey: jsonEncode(<Object>[
+          <String, Object>{
+            'title': '  ',
+            'photos': <String>[photo.path],
+          },
+          <String, Object>{
+            'title': '有効な旅行',
+            'photos': <String>[photo.path],
+          },
+        ]),
+        TripStore.intermediatePrefectureStatesKey: jsonEncode(
+          <String, String>{},
+        ),
+      });
+      final store = TripStore();
+
+      final loaded = await store.load();
+
+      expect(loaded.trips, hasLength(1));
+      expect(loaded.trips.single.title, '有効な旅行');
+      expect(loaded.trips.single.photos, hasLength(1));
+      expect(loaded.trips.single.photos.single.file.path, photo.path);
+      expect(loaded.unassignedPhotos, isEmpty, reason: '無効タイトル旅行へは重複写真を救済しない');
+    });
+
+    test('intermediate: 複数の無効タイトル旅行間では先勝ちで1件だけ救済する', () async {
+      final photo = await createPhotoFile('intermediate-invalid-first.jpg');
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        TripStore.intermediateTripsKey: jsonEncode(<Object>[
+          <String, Object>{
+            'title': ' ',
+            'photos': <String>[photo.path],
+          },
+          <String, Object>{
+            'title': '',
+            'photos': <String>[photo.path],
+          },
+        ]),
+        TripStore.intermediatePrefectureStatesKey: jsonEncode(
+          <String, String>{},
+        ),
+      });
+      final store = TripStore();
+
+      final loaded = await store.load();
+
+      expect(loaded.trips, isEmpty);
+      expect(loaded.unassignedPhotos, hasLength(1));
+      expect(
+        loaded.unassignedPhotos.single.id,
+        TripStore.legacyPhotoId(photo.path),
+      );
+    });
+
+    test('intermediate: 欠損ファイルの参照は後続の実在写真を不当にclaimしない', () async {
+      final missing = File('${temporaryDirectory.path}/missing.jpg');
+      final existing = await createPhotoFile('intermediate-existing.jpg');
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        TripStore.intermediateTripsKey: jsonEncode(<Object>[
+          <String, Object>{
+            'title': ' ',
+            'photos': <String>[missing.path],
+          },
+          <String, Object>{
+            'title': '有効な旅行',
+            'photos': <String>[missing.path, existing.path],
+          },
+        ]),
+        TripStore.intermediatePrefectureStatesKey: jsonEncode(
+          <String, String>{},
+        ),
+      });
+      final store = TripStore();
+
+      final loaded = await store.load();
+
+      expect(loaded.trips, hasLength(1));
+      expect(loaded.trips.single.title, '有効な旅行');
+      expect(loaded.trips.single.photos, hasLength(1));
+      expect(loaded.trips.single.photos.single.file.path, existing.path);
+      expect(loaded.unassignedPhotos, isEmpty);
+    });
+
+    test('legacy: 空白タイトルが先でも有効旅行が同一写真を優先保持する', () async {
+      final photo = await createPhotoFile('legacy-priority.jpg');
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        TripStore.legacyTripsKey: <String>[
+          '  |${photo.path}',
+          '有効な旅行|${photo.path}',
+        ],
+        TripStore.legacyPrefectureStatesKey: const <String>[],
+      });
+      final store = TripStore();
+
+      final loaded = await store.load();
+
+      expect(loaded.trips, hasLength(1));
+      expect(loaded.trips.single.title, '有効な旅行');
+      expect(loaded.trips.single.photos, hasLength(1));
+      expect(loaded.trips.single.photos.single.file.path, photo.path);
+      expect(loaded.unassignedPhotos, isEmpty, reason: '無効タイトル旅行へは重複写真を救済しない');
+    });
+
+    test('legacy: パス表記違い（\\と/）でも有効旅行が同一写真を優先保持する', () async {
+      final photo = await createPhotoFile('legacy-separator-priority.jpg');
+      final slashPath = photo.path.replaceAll('\\', '/');
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        TripStore.legacyTripsKey: <String>[
+          '  |$slashPath',
+          '有効な旅行|${photo.path}',
+        ],
+        TripStore.legacyPrefectureStatesKey: const <String>[],
+      });
+      final store = TripStore();
+
+      final loaded = await store.load();
+
+      expect(loaded.trips, hasLength(1));
+      expect(loaded.trips.single.title, '有効な旅行');
+      expect(loaded.trips.single.photos, hasLength(1));
+      expect(loaded.trips.single.photos.single.file.path, photo.path);
+      expect(
+        loaded.unassignedPhotos,
+        isEmpty,
+        reason: '表記違いの同一パスは正規化され無効旅行へは重複救済しない',
+      );
+    });
+
+    test('legacy: 欠損ファイルの参照は後続の実在写真を不当にclaimしない', () async {
+      final missing = File('${temporaryDirectory.path}/missing-legacy.jpg');
+      final existing = await createPhotoFile('legacy-existing.jpg');
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        TripStore.legacyTripsKey: <String>[
+          '  |${missing.path}',
+          '有効な旅行|${missing.path};;${existing.path}',
+        ],
+        TripStore.legacyPrefectureStatesKey: const <String>[],
+      });
+      final store = TripStore();
+
+      final loaded = await store.load();
+
+      expect(loaded.trips, hasLength(1));
+      expect(loaded.trips.single.title, '有効な旅行');
+      expect(loaded.trips.single.photos, hasLength(1));
+      expect(loaded.trips.single.photos.single.file.path, existing.path);
       expect(loaded.unassignedPhotos, isEmpty);
     });
   });
