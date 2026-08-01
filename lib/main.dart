@@ -24,8 +24,14 @@ part 'home_backup.dart';
 
 void main() => runApp(const KokoittaApp());
 
+/// 起動時cleanupの実行関数。キュー直列化の対象となる写真ファイル削除処理。
+typedef CleanupRunner = Future<void> Function(AppData data);
+
 class KokoittaApp extends StatelessWidget {
-  const KokoittaApp({super.key});
+  const KokoittaApp({super.key, this.cleanupRunner});
+
+  /// 起動時cleanupの実行関数。テストで競合を制御するために注入可能。
+  final CleanupRunner? cleanupRunner;
 
   @override
   Widget build(BuildContext context) {
@@ -71,14 +77,10 @@ class KokoittaApp extends StatelessWidget {
         useMaterial3: true,
       ),
       darkTheme: ThemeData(
-        colorScheme:
-            ColorScheme.fromSeed(
-              seedColor: const Color(0xff8fd3aa),
-              brightness: Brightness.dark,
-            ).copyWith(
-              primary: const Color(0xffb5e8c8),
-              secondary: const Color(0xffffa58f),
-            ),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xff8fd3aa),
+          brightness: Brightness.dark,
+        ).copyWith(primary: Color(0xffb5e8c8), secondary: Color(0xffffa58f)),
         cardTheme: CardThemeData(
           elevation: 1,
           shape: RoundedRectangleBorder(
@@ -89,15 +91,18 @@ class KokoittaApp extends StatelessWidget {
         useMaterial3: true,
       ),
       themeMode: ThemeMode.system,
-      home: const HomePage(),
+      home: HomePage(cleanupRunner: cleanupRunner),
     );
   }
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, this.operationCoordinator});
+  const HomePage({super.key, this.operationCoordinator, this.cleanupRunner});
 
   final OperationCoordinator? operationCoordinator;
+
+  /// 起動時cleanupの実行関数。テストで競合を制御するために注入可能。
+  final CleanupRunner? cleanupRunner;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -116,6 +121,7 @@ class _HomePageState extends State<HomePage> {
   final List<String> _prefectures = validPrefectures.toList(growable: false);
 
   late final OperationCoordinator _coordinator;
+  late final CleanupRunner _cleanupRunner;
   AppData _data = AppData.empty();
   late final Future<void> _initialization;
   bool _isLoading = true;
@@ -130,6 +136,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _coordinator = widget.operationCoordinator ?? OperationCoordinator();
+    _cleanupRunner =
+        widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
     _initialization = _initialize();
     _shareChannel.setMethodCallHandler(_handleShareMethod);
     _statusSub = _coordinator.statusStream.listen((_) {
