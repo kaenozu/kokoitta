@@ -142,6 +142,35 @@ class TripStore {
     throw const FormatException('対応していない保存データ形式です');
   }
 
+  /// 無効タイトルの旅行に含まれる写真を救済するための共通ヘルパー。
+  ///
+  /// 写真の読み取り順は次の優先順位で決定的にする。
+  ///
+  /// 1. 有効タイトルの旅行に所属する写真（先にclaim）
+  /// 2. 既存の旅行未設定写真（次にclaim）
+  /// 3. 無効タイトルの旅行から救済する写真（最後にclaim、重複は破棄）
+  ///
+  /// 写真一覧が構造的に読めない場合（Listでない、要素がMapでない、
+  /// id・pathが不正）は既存のfail-closed方針どおりFormatExceptionを
+  /// 投げ、存在しない写真を推測して生成しない。ファイルが存在しない
+  /// 写真は従来どおり読み飛ばす。
+  List<Photo> _readAndRecover(
+    List<Object?> photosValues,
+    Set<String> claimedPaths,
+    Set<String> claimedIds,
+    bool legacy,
+  ) {
+    final recovered = <Photo>[];
+    for (final photosValue in photosValues) {
+      recovered.addAll(
+        legacy
+            ? _readLegacyFiles(photosValue, claimedPaths)
+            : _readPhotos(photosValue, claimedPaths, claimedIds),
+      );
+    }
+    return recovered;
+  }
+
   AppData _decodeV2(Map<String, dynamic> decoded) {
     final claimedPaths = <String>{};
     final seenTripIds = <String>{};
@@ -150,6 +179,9 @@ class TripStore {
       throw const FormatException('旅行データがありません');
     }
 
+    // タイトルの妥当性と写真一覧の妥当性を独立に評価する。
+    // タイトルが無効な旅行でも、構造的に読める写真は旅行未設定へ救済する。
+    final invalidPhotoValues = <Object?>[];
     final trips = <Trip>[];
     for (final value in tripsValue) {
       if (value is! Map) {
@@ -158,10 +190,12 @@ class TripStore {
       final record = Map<String, dynamic>.from(value);
       final title = record['title'];
       if (title is! String) {
+        invalidPhotoValues.add(record['photos']);
         continue;
       }
       final normalizedTitle = normalizeTripTitle(title);
       if (normalizedTitle == null) {
+        invalidPhotoValues.add(record['photos']);
         continue;
       }
       var id = record['id'];
@@ -178,13 +212,21 @@ class TripStore {
       );
     }
 
+    final unassignedPhotos = _readLegacyFiles(
+      decoded['unassignedPhotos'],
+      claimedPaths,
+    );
+    final recoveredPhotos = _readAndRecover(
+      invalidPhotoValues,
+      claimedPaths,
+      const <String>{},
+      true,
+    );
+
     final prefectureStates = _readPrefectureStates(decoded['prefectureStates']);
     return AppData(
       trips: trips,
-      unassignedPhotos: _readLegacyFiles(
-        decoded['unassignedPhotos'],
-        claimedPaths,
-      ),
+      unassignedPhotos: <Photo>[...unassignedPhotos, ...recoveredPhotos],
       prefectureStates: normalizePrefectureStates(prefectureStates),
     );
   }
@@ -198,6 +240,7 @@ class TripStore {
       throw const FormatException('旅行データがありません');
     }
 
+    final invalidPhotoValues = <Object?>[];
     final trips = <Trip>[];
     for (final value in tripsValue) {
       if (value is! Map) {
@@ -206,10 +249,12 @@ class TripStore {
       final record = Map<String, dynamic>.from(value);
       final title = record['title'];
       if (title is! String) {
+        invalidPhotoValues.add(record['photos']);
         continue;
       }
       final normalizedTitle = normalizeTripTitle(title);
       if (normalizedTitle == null) {
+        invalidPhotoValues.add(record['photos']);
         continue;
       }
       var id = record['id'];
@@ -226,14 +271,22 @@ class TripStore {
       );
     }
 
+    final unassignedPhotos = _readPhotos(
+      decoded['unassignedPhotos'],
+      claimedPaths,
+      claimedIds,
+    );
+    final recoveredPhotos = _readAndRecover(
+      invalidPhotoValues,
+      claimedPaths,
+      claimedIds,
+      false,
+    );
+
     final prefectureStates = _readPrefectureStates(decoded['prefectureStates']);
     return AppData(
       trips: trips,
-      unassignedPhotos: _readPhotos(
-        decoded['unassignedPhotos'],
-        claimedPaths,
-        claimedIds,
-      ),
+      unassignedPhotos: <Photo>[...unassignedPhotos, ...recoveredPhotos],
       prefectureStates: normalizePrefectureStates(prefectureStates),
     );
   }
@@ -294,6 +347,7 @@ class TripStore {
   }
 
   /// v2形式の写真（パス文字列）を読む。欠損ファイルは従来どおり無視する。
+  /// 欠損ファイルはID・パスをclaimしないため、後続する実在写真を奪わない。
   List<Photo> _readLegacyFiles(Object? value, Set<String> claimedPaths) {
     if (value == null) return const <Photo>[];
     if (value is! List) {
@@ -305,16 +359,20 @@ class TripStore {
       if (path is! String) {
         throw const FormatException('写真パスが壊れています');
       }
-      if (!claimedPaths.add(path.replaceAll('\\', '/'))) continue;
+      final normalizedPath = path.replaceAll('\\', '/');
+      if (claimedPaths.contains(normalizedPath)) continue;
       final file = File(path);
       if (!file.existsSync()) continue;
+      claimedPaths.add(normalizedPath);
       photos.add(Photo(id: legacyPhotoId(path), file: file));
     }
     return photos;
   }
 
   /// v3形式の写真レコードを読む。パス・IDの重複は読み込み時に最初の1件へ
-  /// 集約し、欠損ファイルは無視する。metadataは壊れていてもnullへ正規化する。
+  /// 集約し、欠損ファイルは無視する。欠損ファイルはID・パスをclaimしないため、
+  /// 後続する実在写真（同一ID・別パス）を奪わない。metadataは壊れていても
+  /// nullへ正規化する。
   List<Photo> _readPhotos(
     Object? value,
     Set<String> claimedPaths,
@@ -339,11 +397,15 @@ class TripStore {
       if (path is! String) {
         throw const FormatException('写真パスが壊れています');
       }
-      if (claimedPaths.contains(path) || claimedIds.contains(id)) continue;
-      claimedPaths.add(path);
-      claimedIds.add(id);
+      // セパレータ表記違い（\ と /）は正規化して同一パスとして扱う。
+      final normalizedPath = path.replaceAll('\\', '/');
+      if (claimedPaths.contains(normalizedPath) || claimedIds.contains(id)) {
+        continue;
+      }
       final file = File(path);
       if (!file.existsSync()) continue;
+      claimedPaths.add(normalizedPath);
+      claimedIds.add(id);
       photos.add(
         Photo(
           id: id,
@@ -384,8 +446,11 @@ class TripStore {
     final statesRaw = preferences.getString(intermediatePrefectureStatesKey);
     if (tripsRaw == null && statesRaw == null) return null;
 
-    final trips = <Trip>[];
-    final claimedPaths = <String>{};
+    // タイトル妥当性と写真構造評価を分離するため、全レコードを先に構造解析し、
+    // 有効タイトル旅行の写真値と無効タイトル旅行の写真値へ分類する。これにより
+    // レコード順に関係なく、有効タイトル旅行 → 救済写真の優先順位が成立する。
+    final validRecords = <({String title, Object? photos})>[];
+    final invalidPhotoValues = <Object?>[];
     if (tripsRaw != null) {
       final decoded = jsonDecode(tripsRaw);
       if (decoded is! List) {
@@ -397,22 +462,38 @@ class TripStore {
         }
         final record = Map<String, dynamic>.from(value);
         final title = record['title'];
-        if (title is! String) {
-          continue;
-        }
-        final normalizedTitle = normalizeTripTitle(title);
+        // タイトルが無効でも、読める写真は旅行未設定へ救済する。
+        final normalizedTitle = title is String
+            ? normalizeTripTitle(title)
+            : null;
         if (normalizedTitle == null) {
+          invalidPhotoValues.add(record['photos']);
           continue;
         }
-        trips.add(
-          Trip(
-            id: createEntityId('trip'),
-            title: normalizedTitle,
-            photos: _readLegacyFiles(record['photos'], claimedPaths),
-          ),
-        );
+        validRecords.add((title: normalizedTitle, photos: record['photos']));
       }
     }
+
+    // 有効タイトル旅行の写真を先に読み込み、claimする。
+    final trips = <Trip>[];
+    final claimedPaths = <String>{};
+    for (final record in validRecords) {
+      trips.add(
+        Trip(
+          id: createEntityId('trip'),
+          title: record.title,
+          photos: _readLegacyFiles(record.photos, claimedPaths),
+        ),
+      );
+    }
+
+    // 無効タイトル旅行の写真を最後に読み込み、未claimの写真だけ救済する。
+    final recoveredPhotos = _readAndRecover(
+      invalidPhotoValues,
+      claimedPaths,
+      const <String>{},
+      true,
+    );
 
     final prefectureStates = <String, String>{};
     if (statesRaw != null) {
@@ -425,36 +506,50 @@ class TripStore {
 
     return AppData(
       trips: trips,
-      unassignedPhotos: const <Photo>[],
+      unassignedPhotos: recoveredPhotos,
       prefectureStates: normalizePrefectureStates(prefectureStates),
     );
   }
 
   AppData _loadLegacy(SharedPreferences preferences) {
-    final trips = <Trip>[];
-    final claimedPaths = <String>{};
-    for (final record
-        in preferences.getStringList(legacyTripsKey) ?? const <String>[]) {
+    // タイトル妥当性と写真部分の特定を分離するため、全レコードを先に構造解析し、
+    // 有効タイトル旅行の写真部分と無効タイトル旅行の写真部分へ分類する。これに
+    // よりレコード順に関係なく、有効タイトル旅行 → 救済写真の優先順位が成立する。
+    final allRecords =
+        preferences.getStringList(legacyTripsKey) ?? const <String>[];
+    final validRecords = <({String title, String photosPart})>[];
+    final invalidPhotosParts = <String>[];
+    for (final record in allRecords) {
       final separator = record.indexOf('|');
-      if (separator <= 0) continue;
+      // 「|」が無いレコードは写真部分を特定できないため救済しない。
+      if (separator < 0) continue;
       final title = record.substring(0, separator);
       final normalizedTitle = normalizeTripTitle(title);
-      if (normalizedTitle == null) continue;
-      final photos = record
-          .substring(separator + 1)
-          .split(';;')
-          .where((path) => path.isNotEmpty)
-          .where((path) => claimedPaths.add(path.replaceAll('\\', '/')))
-          .map((path) => Photo(id: legacyPhotoId(path), file: File(path)))
-          .where((photo) => photo.file.existsSync())
-          .toList(growable: false);
+      final photosPart = record.substring(separator + 1);
+      if (normalizedTitle == null) {
+        invalidPhotosParts.add(photosPart);
+        continue;
+      }
+      validRecords.add((title: normalizedTitle, photosPart: photosPart));
+    }
+
+    // 有効タイトル旅行の写真を先に読み込み、claimする。
+    final trips = <Trip>[];
+    final claimedPaths = <String>{};
+    for (final record in validRecords) {
       trips.add(
         Trip(
           id: createEntityId('trip'),
-          title: normalizedTitle,
-          photos: photos,
+          title: record.title,
+          photos: _readLegacyPhotosPart(record.photosPart, claimedPaths),
         ),
       );
+    }
+
+    // 無効タイトル旅行の写真を最後に読み込み、未claimの写真だけ救済する。
+    final unassignedPhotos = <Photo>[];
+    for (final photosPart in invalidPhotosParts) {
+      unassignedPhotos.addAll(_readLegacyPhotosPart(photosPart, claimedPaths));
     }
 
     final prefectureStates = <String, String>{};
@@ -471,8 +566,28 @@ class TripStore {
 
     return AppData(
       trips: trips,
-      unassignedPhotos: const <Photo>[],
+      unassignedPhotos: unassignedPhotos,
       prefectureStates: normalizePrefectureStates(prefectureStates),
     );
+  }
+
+  /// legacy形式の写真部分（`;;`区切りのパス文字列）を読む。パスはセパレータ
+  /// 表記違い（`\` と `/`）を正規化して同一扱いにし、欠損ファイルは読み飛ばす。
+  /// 欠損ファイルはパスをclaimしないため、後続する実在写真を奪わない。
+  List<Photo> _readLegacyPhotosPart(
+    String photosPart,
+    Set<String> claimedPaths,
+  ) {
+    final photos = <Photo>[];
+    for (final path in photosPart.split(';;')) {
+      if (path.isEmpty) continue;
+      final normalizedPath = path.replaceAll('\\', '/');
+      if (claimedPaths.contains(normalizedPath)) continue;
+      final file = File(path);
+      if (!file.existsSync()) continue;
+      claimedPaths.add(normalizedPath);
+      photos.add(Photo(id: legacyPhotoId(path), file: file));
+    }
+    return photos;
   }
 }
