@@ -96,9 +96,31 @@ extension _BackupRestoreOperations on BackupService {
       2 => _parseVersion2(rawTrips),
       _ => _parseVersion3(rawTrips),
     };
-    if (parsed.trips.length > BackupService.maxTrips ||
-        parsed.photoCount > BackupService.maxPhotos) {
-      throw const FormatException('無料版の旅行数または写真枚数の上限を超えています');
+
+    final structuralIssue = checkBackupInvariants(
+      BackupInvariantCheck(
+        tripCount: parsed.trips.length,
+        photoCount: parsed.photoCount,
+        tripIds: parsed.trips.map((trip) => trip.id),
+        photos: <BackupInvariantPhoto>[
+          for (final trip in parsed.trips)
+            for (final photo in trip.photos)
+              BackupInvariantPhoto(
+                id: photo.id,
+                path: photo.archivePath,
+                metadataStrings: _photoMetadataStrings(photo),
+              ),
+          for (final photo in parsed.unassignedPhotos)
+            BackupInvariantPhoto(
+              id: photo.id,
+              path: photo.archivePath,
+              metadataStrings: _photoMetadataStrings(photo),
+            ),
+        ],
+      ),
+    );
+    if (structuralIssue != null) {
+      throw FormatException(structuralIssue.subject);
     }
 
     final declaredTripCount = manifest['tripCount'];
@@ -108,20 +130,6 @@ extension _BackupRestoreOperations on BackupService {
         declaredTripCount != parsed.trips.length ||
         declaredPhotoCount != parsed.photoCount) {
       throw const FormatException('バックアップ件数が一致しません');
-    }
-
-    final seenPhotoIds = <String>{};
-    for (final trip in parsed.trips) {
-      for (final photo in trip.photos) {
-        if (!seenPhotoIds.add(photo.id)) {
-          throw FormatException('写真IDが重複しています: ${photo.id}');
-        }
-      }
-    }
-    for (final photo in parsed.unassignedPhotos) {
-      if (!seenPhotoIds.add(photo.id)) {
-        throw FormatException('写真IDが重複しています: ${photo.id}');
-      }
     }
 
     final checksums = <String, String>{};
@@ -146,7 +154,6 @@ extension _BackupRestoreOperations on BackupService {
 
     var extractedBytes = 0;
     var extractedPhotos = 0;
-    final seenArchivePaths = <String>{};
 
     Future<List<PreparedPhoto>> extractPhotos(
       List<_ParsedPhoto> photos,
@@ -157,14 +164,11 @@ extension _BackupRestoreOperations on BackupService {
         final photo = photos[index];
         final archivePath = photo.archivePath;
         _validateArchivePhotoPath(archivePath);
-        if (!seenArchivePaths.add(archivePath)) {
-          throw FormatException('同じ写真が複数回参照されています: $archivePath');
-        }
         final entry = archive.findFile(archivePath);
         if (entry == null) {
           throw FormatException('写真が見つかりません: $archivePath');
         }
-        if (entry.size > BackupService.maxSinglePhotoBytes) {
+        if (entry.size > maxSinglePhotoBytes) {
           throw FormatException('写真1枚の容量が上限を超えています: $archivePath');
         }
         final content = entry.readBytes();
@@ -173,7 +177,7 @@ extension _BackupRestoreOperations on BackupService {
         }
         extractedBytes += content.length;
         extractedPhotos += 1;
-        if (extractedBytes > BackupService.maxUncompressedBytes ||
+        if (extractedBytes > maxUncompressedBytes ||
             extractedPhotos > BackupService.maxPhotos) {
           throw const FormatException('展開後の容量または写真枚数が上限を超えています');
         }
@@ -279,7 +283,7 @@ void _validateJsonValue(Object? value, String path, {int depth = 0}) {
     throw FormatException('無効なバックアップです（データ構造が複雑すぎます）');
   }
   if (value is String) {
-    if (value.length > 500) {
+    if (value.length > backupMaxMetadataStringLength) {
       throw FormatException('無効なバックアップです（異常に長い文字列があります）');
     }
   } else if (value is List) {
@@ -290,7 +294,7 @@ void _validateJsonValue(Object? value, String path, {int depth = 0}) {
       _validateJsonValue(value[i], '$path[$i]', depth: depth + 1);
     }
   } else if (value is Map) {
-    if (value.length > 100) {
+    if (value.length > 400) {
       throw FormatException('無効なバックアップです（データ量が多すぎます）');
     }
     for (final entry in value.entries) {
@@ -423,14 +427,12 @@ _ParsedBackup _parseVersion3(Object? value) {
   }
 
   final trips = <_ParsedTrip>[];
-  final seenIds = <String>{};
   for (final recordValue in tripsValue) {
     if (recordValue is! Map) {
       throw const FormatException('旅行データが壊れています');
     }
     final record = Map<String, dynamic>.from(recordValue);
-    var id = _requiredString(record['id'], '旅行ID');
-    if (!seenIds.add(id)) id = createEntityId('trip');
+    final id = _requiredString(record['id'], '旅行ID');
     final titleValue = record['title'];
     if (titleValue is! String) {
       continue;
@@ -504,11 +506,21 @@ DateTime? _readOptionalDateTime(Object? value) {
 String? _readOptionalString(Object? value) => value is String ? value : null;
 
 String _requiredString(Object? value, String label) {
-  if (value is! String || value.isEmpty || value.length > 200) {
+  if (value is! String ||
+      value.isEmpty ||
+      value.length > backupMaxEntityIdLength) {
     throw FormatException('$label が壊れています');
   }
   return value;
 }
+
+/// 共通検査へ渡す写真metadata文字列一覧。作成側が書き込む内容と同じ形にする。
+List<String> _photoMetadataStrings(_ParsedPhoto photo) => <String>[
+  if (photo.capturedAt != null) photo.capturedAt!.toIso8601String(),
+  if (photo.location != null) photo.location!,
+  if (photo.originalName != null) photo.originalName!,
+  if (photo.mimeType != null) photo.mimeType!,
+];
 
 List<String> _requiredStringList(Object? value, String label) {
   if (value is! List) throw FormatException('$label が壊れています');

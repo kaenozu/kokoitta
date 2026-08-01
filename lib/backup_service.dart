@@ -7,6 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'backup_invariants.dart';
 import 'models.dart';
 import 'photo.dart';
 import 'validators.dart';
@@ -21,19 +22,25 @@ class BackupService {
   BackupService({
     DocumentsDirectoryProvider? documentsDirectoryProvider,
     BackupFilePicker? backupFilePicker,
+    this.maxSinglePhotoBytes = backupMaxSinglePhotoBytes,
+    this.maxUncompressedBytes = backupMaxUncompressedBytes,
   }) : _documentsDirectoryProvider =
            documentsDirectoryProvider ?? getApplicationDocumentsDirectory,
        _backupFilePicker = backupFilePicker ?? _pickBackupFile;
 
   static const String appId = 'com.kaenozu.kokoitta_app';
   static const int currentFormatVersion = 3;
-  static const int maxTrips = 10;
-  static const int maxPhotos = 300;
-  static const int maxCompressedBytes = 700 * 1024 * 1024;
-  static const int maxSinglePhotoBytes = 40 * 1024 * 1024;
-  static const int maxUncompressedBytes = 900 * 1024 * 1024;
-  static const int maxManifestBytes = 512 * 1024;
-  static const int maxTripsBytes = 2 * 1024 * 1024;
+  static const int maxTrips = backupMaxTrips;
+  static const int maxPhotos = backupMaxPhotos;
+  static const int maxCompressedBytes = backupMaxCompressedBytes;
+  static const int maxManifestBytes = backupMaxManifestBytes;
+  static const int maxTripsBytes = backupMaxTripsBytes;
+
+  /// 写真1枚・合計の容量上限。テストで縮小できるようインスタンス変数とし、
+  /// 既定値は共通定数（[backupMaxSinglePhotoBytes] / [backupMaxUncompressedBytes]）を
+  /// 参照する。
+  final int maxSinglePhotoBytes;
+  final int maxUncompressedBytes;
 
   final DocumentsDirectoryProvider _documentsDirectoryProvider;
   final BackupFilePicker _backupFilePicker;
@@ -59,9 +66,9 @@ class BackupService {
       _BackupRestoreOperations(this).shareBackup(file);
 
   Future<File> _createBackup(AppData data, {required String folderName}) async {
+    _validateBackupSource(data);
     final checksums = <String, String>{};
     final archiveFiles = <({File file, String archivePath})>[];
-    final claimedIds = <String>{};
     var totalBytes = 0;
     var photoCount = 0;
 
@@ -72,9 +79,6 @@ class BackupService {
       final records = <Map<String, Object>>[];
       var index = 0;
       for (final photo in photos) {
-        if (!claimedIds.add(photo.id)) {
-          throw StateError('同じ写真IDが複数箇所に所属しています: ${photo.id}');
-        }
         final file = photo.file;
         if (!await file.exists()) {
           throw FileSystemException('バックアップ対象の写真がありません', file.path);
@@ -85,8 +89,8 @@ class BackupService {
         }
         totalBytes += length;
         photoCount += 1;
-        if (totalBytes > maxUncompressedBytes || photoCount > maxPhotos) {
-          throw const FormatException('バックアップ対象の写真容量または枚数が上限を超えています');
+        if (totalBytes > maxUncompressedBytes) {
+          throw const FormatException('バックアップ対象の写真容量が上限を超えています');
         }
         final archivePath =
             'photos/$group-${index.toString().padLeft(3, '0')}${_safeExtension(file.path)}';
@@ -180,6 +184,47 @@ class BackupService {
       if (await workDirectory.exists()) {
         await workDirectory.delete(recursive: true);
       }
+    }
+  }
+
+  /// AppDataの構造的不変条件を、ファイルI/O・ZIP生成より前に検証する。
+  ///
+  /// 復元側が `prepareRestoreFile()` で拒否する条件（旅行数・写真数の上限、
+  /// Photo ID・パス・旅行IDの重複等）を、作成前に共通validatorで同じ定義から
+  /// 検査する。違反時は作成側の例外規約に従い、上限超過は [FormatException]、
+  /// メモリ上の構造違反は [StateError] を投げる。
+  void _validateBackupSource(AppData data) {
+    final issue = checkBackupInvariants(
+      BackupInvariantCheck(
+        tripCount: data.trips.length,
+        photoCount: data.photoCount,
+        tripIds: data.trips.map((trip) => trip.id),
+        photos: data.allPhotos.map(
+          (photo) => BackupInvariantPhoto(
+            id: photo.id,
+            path: canonicalPhotoPath(photo.file),
+            metadataStrings: <String>[
+              if (photo.capturedAt != null) photo.capturedAt!.toIso8601String(),
+              if (photo.location != null) photo.location!,
+              if (photo.originalName != null) photo.originalName!,
+              if (photo.mimeType != null) photo.mimeType!,
+            ],
+          ),
+        ),
+      ),
+    );
+    if (issue == null) return;
+    switch (issue.violation) {
+      case BackupInvariantViolation.tooManyTrips:
+      case BackupInvariantViolation.tooManyPhotos:
+      case BackupInvariantViolation.metadataTooLong:
+        throw FormatException(issue.subject);
+      case BackupInvariantViolation.duplicateTripId:
+      case BackupInvariantViolation.invalidTripId:
+      case BackupInvariantViolation.duplicatePhotoId:
+      case BackupInvariantViolation.invalidPhotoId:
+      case BackupInvariantViolation.duplicatePhotoPath:
+        throw StateError(issue.subject);
     }
   }
 }
