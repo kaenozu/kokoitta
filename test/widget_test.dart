@@ -233,6 +233,21 @@ class _ThrowingPrefsStore extends InMemorySharedPreferencesStore {
   }
 }
 
+/// 初期ロードは許可し、取り込みcommitだけを失敗させるprefsストア。
+class _CommitFailingPrefsStore extends InMemorySharedPreferencesStore {
+  _CommitFailingPrefsStore() : super.empty();
+
+  bool failWrites = false;
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) {
+    if (failWrites) {
+      throw StateError('commit失敗のテスト用');
+    }
+    return super.setValue(valueType, key, value);
+  }
+}
+
 /// path_providerのモックを登録し、テスト終了時に解除する。
 void _mockPathProvider(Directory documentsDir) {
   const pathChannel = MethodChannel('plugins.flutter.io/path_provider');
@@ -1008,12 +1023,20 @@ void main() {
     final source = await createSourceFile(tester, 'shared_cancel_source.jpg');
     final documentsDir = await createDocumentsDir(tester);
     _mockPathProvider(documentsDir);
+    ImportEvent? terminalEvent;
 
     final store = _HoldingPrefsStore();
     SharedPreferencesStorePlatform.instance = store;
 
     await tester.runAsync(() async {
-      await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
+      await tester.pumpWidget(
+        KokoittaApp(
+          cleanupRunner: _noopCleanup,
+          onImportEvent: (event) {
+            if (event.isTerminal) terminalEvent = event;
+          },
+        ),
+      );
       await waitUntilLoaded(tester);
 
       store.release = Completer<void>();
@@ -1055,6 +1078,58 @@ void main() {
     // キャンセルした取り込みの成功SnackBarは出ないこと。
     expect(find.textContaining('取り込みました'), findsNothing);
     // コピーされた写真ファイルも削除されていること。
+    await tester.runAsync(() async {
+      final photosDir = Directory('${documentsDir.path}/photos');
+      if (await photosDir.exists()) {
+        expect(await photosDir.list().toList(), isEmpty);
+      }
+    });
+    expect(terminalEvent, isNotNull);
+    expect(terminalEvent!.phase, ImportPhase.cancelled);
+    expect(terminalEvent!.succeeded, 0);
+    expect(terminalEvent!.successes, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('共有importのcommit失敗は保存状態と生成ファイルを残さない', (tester) async {
+    final source = await createSourceFile(tester, 'shared_commit_failure.jpg');
+    final documentsDir = await createDocumentsDir(tester);
+    _mockPathProvider(documentsDir);
+    final store = _CommitFailingPrefsStore();
+    SharedPreferencesStorePlatform.instance = store;
+    ImportEvent? terminalEvent;
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        KokoittaApp(
+          cleanupRunner: _noopCleanup,
+          onImportEvent: (event) {
+            if (event.isTerminal) terminalEvent = event;
+          },
+        ),
+      );
+      await waitUntilLoaded(tester);
+      store.failWrites = true;
+      await sendImportEvent(
+        tester,
+        method: 'importResult',
+        arguments: importResultEvent(
+          requestId: 'request-commit-failure',
+          path: source.path,
+        ),
+      );
+    });
+
+    final preferences = await SharedPreferences.getInstance();
+    final raw = preferences.getString(TripStore.dataKey);
+    expect(raw, isNotNull);
+    final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+    expect(decoded['trips'], isEmpty);
+    expect(terminalEvent, isNotNull);
+    expect(terminalEvent!.phase, ImportPhase.failed);
+    expect(terminalEvent!.succeeded, 0);
+    expect(terminalEvent!.successes, isEmpty);
+    expect(terminalEvent!.failures.single.errorCode, 'save_failed');
     await tester.runAsync(() async {
       final photosDir = Directory('${documentsDir.path}/photos');
       if (await photosDir.exists()) {

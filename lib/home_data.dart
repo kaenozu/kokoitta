@@ -124,6 +124,21 @@ extension _HomeDataActions on _HomePageState {
     _updateState(() => _data = next);
   }
 
+  /// Roll back a committed import without deleting files while persistence is
+  /// still in the committed state.
+  Future<bool> _rollbackCommittedImport(
+    AppData previousData,
+    Iterable<Photo> copiedPhotos,
+  ) async {
+    try {
+      await _store.save(previousData);
+      if (mounted) _updateState(() => _data = previousData);
+      return await _deleteFiles(copiedPhotos) == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<ImportEvent?> _importSharedUris(ImportEvent source) async {
     var copiedCount = 0;
     var successfulFiles = const <ImportedFile>[];
@@ -196,11 +211,21 @@ extension _HomeDataActions on _HomePageState {
         // 保存（commit）中のUIキャンセルは保存完了後にしか検出できない。
         // ストアとメモリをpreviousDataへ巻き戻し、写真も削除する。
         if (_cancelledImportRequestIds.contains(source.requestId)) {
-          await _store.save(previousData);
-          _updateState(() => _data = previousData);
-          await _deleteFiles(copied.photos);
+          final rolledBack = await _rollbackCommittedImport(
+            previousData,
+            copied.photos,
+          );
           copiedCount = 0;
           successfulFiles = const <ImportedFile>[];
+          if (!rolledBack) {
+            failures.add(
+              const ImportFailure(
+                index: 0,
+                errorCode: 'rollback_failed',
+                reason: '取り込みの取り消しに失敗しました',
+              ),
+            );
+          }
           return;
         }
       });
@@ -226,8 +251,8 @@ extension _HomeDataActions on _HomePageState {
     final completed = ImportEvent(
       requestId: source.requestId,
       phase: phase,
-      processed: source.total,
-      total: source.total,
+      processed: copiedCount + failures.length,
+      total: copiedCount + failures.length,
       succeeded: copiedCount,
       failed: failures.length,
       isTerminal: true,
@@ -458,9 +483,13 @@ extension _HomeDataActions on _HomePageState {
         // 保存（commit）中のUIキャンセルは保存完了後にしか検出できない。
         // ストアとメモリをpreviousDataへ巻き戻し、写真も削除する。
         if (_cancelledImportRequestIds.contains(requestId)) {
-          await _store.save(previousData);
-          _updateState(() => _data = previousData);
-          await _deleteFiles(copied.photos);
+          final rolledBack = await _rollbackCommittedImport(
+            previousData,
+            copied.photos,
+          );
+          if (!rolledBack) {
+            throw StateError('写真取り込みの取り消しに失敗しました');
+          }
           return;
         }
         final phase = copied.failures.isEmpty
