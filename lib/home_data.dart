@@ -9,6 +9,7 @@ class _CopiedImportResult {
 
   final List<Photo> photos;
   final List<ImportFailure> failures;
+
   /// Shared inputs corresponding to [photos], in the same order.
   ///
   /// Picker imports do not use this mapping and leave it empty.
@@ -124,25 +125,69 @@ extension _HomeDataActions on _HomePageState {
     _updateState(() => _data = next);
   }
 
-  /// Roll back a committed import without deleting files while persistence is
-  /// still in the committed state.
-  Future<bool> _rollbackCommittedImport(
+  ImportEvent _sharedCancellationResult(
+    ImportEvent source, {
+    ImportFailure? failure,
+  }) {
+    if (failure != null) {
+      return ImportEvent(
+        requestId: source.requestId,
+        phase: ImportPhase.failed,
+        processed: 1,
+        total: 1,
+        succeeded: 0,
+        failed: 1,
+        isTerminal: true,
+        failures: <ImportFailure>[failure],
+      );
+    }
+    return ImportEvent(
+      requestId: source.requestId,
+      phase: ImportPhase.cancelled,
+      processed: source.processed,
+      total: source.total,
+      succeeded: 0,
+      failed: source.failures.length,
+      isTerminal: true,
+      failures: source.failures,
+    );
+  }
+
+  /// Roll back a committed import, then remove every generated photo file.
+  ///
+  /// A concrete failure is returned so cancellation cannot be reported as
+  /// successful while persistence or file cleanup is still inconsistent.
+  Future<ImportFailure?> _rollbackCommittedImport(
     AppData previousData,
     Iterable<Photo> copiedPhotos,
   ) async {
     try {
       await _store.save(previousData);
       if (mounted) _updateState(() => _data = previousData);
-      return await _deleteFiles(copiedPhotos) == 0;
-    } catch (_) {
-      return false;
+    } catch (error) {
+      return ImportFailure(
+        index: 0,
+        errorCode: 'rollback_restore_failed',
+        reason: '取り込み前の保存状態へ戻せませんでした: ${_readableError(error)}',
+      );
     }
+
+    final deleteFailures = await _deleteFiles(copiedPhotos);
+    if (deleteFailures > 0) {
+      return ImportFailure(
+        index: 0,
+        errorCode: 'rollback_cleanup_failed',
+        reason: '$deleteFailures枚の生成写真を削除できませんでした',
+      );
+    }
+    return null;
   }
 
   Future<ImportEvent?> _importSharedUris(ImportEvent source) async {
     var copiedCount = 0;
     var successfulFiles = const <ImportedFile>[];
     var failures = <ImportFailure>[...source.failures];
+    ImportEvent? cancellationResult;
     try {
       await _coordinator.runMutation(() async {
         final uniqueFiles = <ImportedFile>[];
@@ -172,9 +217,19 @@ extension _HomeDataActions on _HomePageState {
         copiedCount = copied.photos.length;
         successfulFiles = copied.successfulFiles;
         if (_cancelledImportRequestIds.contains(source.requestId)) {
-          await _deleteFiles(copied.photos);
+          final deleteFailures = await _deleteFiles(copied.photos);
           copiedCount = 0;
           successfulFiles = const <ImportedFile>[];
+          cancellationResult = _sharedCancellationResult(
+            source,
+            failure: deleteFailures == 0
+                ? null
+                : ImportFailure(
+                    index: 0,
+                    errorCode: 'cancel_cleanup_failed',
+                    reason: '$deleteFailures枚の生成写真を削除できませんでした',
+                  ),
+          );
           return;
         }
         if (copied.photos.isEmpty) return;
@@ -203,29 +258,37 @@ extension _HomeDataActions on _HomePageState {
         try {
           await _commitData(next);
         } catch (_) {
-          await _deleteFiles(copied.photos);
+          final deleteFailures = await _deleteFiles(copied.photos);
           copiedCount = 0;
           successfulFiles = const <ImportedFile>[];
+          if (_cancelledImportRequestIds.contains(source.requestId)) {
+            cancellationResult = _sharedCancellationResult(
+              source,
+              failure: deleteFailures == 0
+                  ? null
+                  : ImportFailure(
+                      index: 0,
+                      errorCode: 'cancel_cleanup_failed',
+                      reason: '$deleteFailures枚の生成写真を削除できませんでした',
+                    ),
+            );
+            return;
+          }
           rethrow;
         }
         // 保存（commit）中のUIキャンセルは保存完了後にしか検出できない。
         // ストアとメモリをpreviousDataへ巻き戻し、写真も削除する。
         if (_cancelledImportRequestIds.contains(source.requestId)) {
-          final rolledBack = await _rollbackCommittedImport(
+          final rollbackFailure = await _rollbackCommittedImport(
             previousData,
             copied.photos,
           );
           copiedCount = 0;
           successfulFiles = const <ImportedFile>[];
-          if (!rolledBack) {
-            failures.add(
-              const ImportFailure(
-                index: 0,
-                errorCode: 'rollback_failed',
-                reason: '取り込みの取り消しに失敗しました',
-              ),
-            );
-          }
+          cancellationResult = _sharedCancellationResult(
+            source,
+            failure: rollbackFailure,
+          );
           return;
         }
       });
@@ -238,11 +301,31 @@ extension _HomeDataActions on _HomePageState {
         ),
       );
     }
-    // キャンセル済みrequestの完了イベント・成功SnackBarは出さない。
-    // キャンセル時のUI表示（cancelled event）は_cancelImportが担う。
-    if (_cancelledImportRequestIds.contains(source.requestId)) {
-      return null;
+
+    if (cancellationResult != null) {
+      if (cancellationResult!.phase == ImportPhase.failed) {
+        _showMessage('取り込みの取り消しに失敗しました。旅行と写真を確認してください');
+      }
+      return cancellationResult;
     }
+    if (_cancelledImportRequestIds.contains(source.requestId)) {
+      final cleanupFailure = failures
+          .where(
+            (failure) =>
+                failure.errorCode == 'temporary_cleanup_failed' ||
+                failure.errorCode == 'cancel_cleanup_failed',
+          )
+          .firstOrNull;
+      final result = _sharedCancellationResult(
+        source,
+        failure: cleanupFailure,
+      );
+      if (result.phase == ImportPhase.failed) {
+        _showMessage('取り込みの取り消しに失敗しました。写真を確認してください');
+      }
+      return result;
+    }
+
     final phase = failures.isEmpty
         ? ImportPhase.completed
         : copiedCount > 0
@@ -374,6 +457,22 @@ extension _HomeDataActions on _HomePageState {
       );
     }
 
+    void setPickerCancellationResult(ImportFailure? failure) {
+      setPickerEvent(
+        phase: failure == null ? ImportPhase.cancelled : ImportPhase.failed,
+        processed: failure == null ? 0 : 1,
+        succeeded: 0,
+        failed: failure == null ? 0 : 1,
+        terminal: true,
+        failures: failure == null
+            ? const <ImportFailure>[]
+            : <ImportFailure>[failure],
+      );
+      if (failure != null) {
+        _showMessage('取り込みの取り消しに失敗しました。旅行と写真を確認してください');
+      }
+    }
+
     setPickerEvent(
       phase: ImportPhase.preparing,
       processed: 0,
@@ -440,7 +539,16 @@ extension _HomeDataActions on _HomePageState {
           ),
         );
         if (_cancelledImportRequestIds.contains(requestId)) {
-          await _deleteFiles(copied.photos);
+          final deleteFailures = await _deleteFiles(copied.photos);
+          setPickerCancellationResult(
+            deleteFailures == 0
+                ? null
+                : ImportFailure(
+                    index: 0,
+                    errorCode: 'cancel_cleanup_failed',
+                    reason: '$deleteFailures枚の生成写真を削除できませんでした',
+                  ),
+          );
           return;
         }
         if (copied.photos.isEmpty) {
@@ -477,19 +585,29 @@ extension _HomeDataActions on _HomePageState {
         try {
           await _commitData(next);
         } catch (_) {
-          await _deleteFiles(copied.photos);
+          final deleteFailures = await _deleteFiles(copied.photos);
+          if (_cancelledImportRequestIds.contains(requestId)) {
+            setPickerCancellationResult(
+              deleteFailures == 0
+                  ? null
+                  : ImportFailure(
+                      index: 0,
+                      errorCode: 'cancel_cleanup_failed',
+                      reason: '$deleteFailures枚の生成写真を削除できませんでした',
+                    ),
+            );
+            return;
+          }
           rethrow;
         }
         // 保存（commit）中のUIキャンセルは保存完了後にしか検出できない。
         // ストアとメモリをpreviousDataへ巻き戻し、写真も削除する。
         if (_cancelledImportRequestIds.contains(requestId)) {
-          final rolledBack = await _rollbackCommittedImport(
+          final rollbackFailure = await _rollbackCommittedImport(
             previousData,
             copied.photos,
           );
-          if (!rolledBack) {
-            throw StateError('写真取り込みの取り消しに失敗しました');
-          }
+          setPickerCancellationResult(rollbackFailure);
           return;
         }
         final phase = copied.failures.isEmpty
