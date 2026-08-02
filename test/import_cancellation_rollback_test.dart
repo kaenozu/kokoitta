@@ -227,8 +227,14 @@ void main() {
     expect(terminal.failures.single.errorCode, 'rollback_restore_failed');
     final preferences = await SharedPreferences.getInstance();
     final raw = preferences.getString(TripStore.dataKey);
+    final pending = preferences.getString(TripStore.pendingKey);
     expect(raw, isNotNull);
-    expect(_tripCount(raw!), 1);
+    expect(pending, isNotNull);
+    // SharedPreferencesは失敗したsetStringでもクライアントキャッシュを先に
+    // 更新し得る。画面メモリはcommit済み1件、保存キャッシュとpendingは
+    // rollback対象の0件となり、まさに利用者へ通知すべき不確定状態になる。
+    expect(_tripCount(raw!), 0);
+    expect(_tripCount(pending!), 0);
     expect(
       await tester.runAsync(() => _copiedPhotos(documentsDir)),
       hasLength(1),
