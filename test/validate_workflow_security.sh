@@ -98,18 +98,18 @@ assert_section_not_contains "$validate_runs" "github.ref_name" \
   "run blocks do not directly expand github.ref_name"
 assert_section_not_contains "$validate_runs" "github.event.inputs.version" \
   "run blocks do not directly expand workflow input"
-assert_section_contains "$validate_section" "ref: main" \
-  "validate always checks out trusted main"
+assert_section_contains "$validate_section" 'ref: ${{ github.sha }}' \
+  "validate checks out the event commit"
 assert_section_contains "$validate_section" "fetch-depth: 0" \
   "validate checkout includes history for ancestry check"
-assert_section_contains "$validate_section" "Verify tagged commit belongs to main" \
-  "tag ancestry check exists"
+assert_section_contains "$validate_section" "Verify event commit belongs to main" \
+  "event commit ancestry check exists"
 assert_section_contains "$validate_section" \
   'EVENT_COMMIT_SHA: ${{ github.sha }}' \
   "tag event SHA is passed through env"
 assert_section_contains "$validate_section" \
-  'git merge-base --is-ancestor "$EVENT_COMMIT_SHA" HEAD' \
-  "tag commit must be contained in trusted main"
+  'git merge-base --is-ancestor "$EVENT_COMMIT_SHA" origin/main' \
+  "event commit must be contained in trusted main"
 assert_section_contains "$validate_section" "Reject non-main manual runs" \
   "manual runs fail closed outside main"
 
