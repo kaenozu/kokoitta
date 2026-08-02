@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/image_decode.dart';
+import 'package:kokoitta_app/import_progress.dart';
 import 'package:kokoitta_app/main.dart';
 import 'package:kokoitta_app/models.dart';
 import 'package:kokoitta_app/operation_coordinator.dart';
@@ -686,6 +687,98 @@ void main() {
     expect(storedPhoto.containsKey('capturedAt'), isFalse);
     expect(storedPhoto['id'], isA<String>());
     expect(storedPhoto['path'], isA<String>());
+  });
+
+  testWidgets('共有importは前方失敗と後方成功の対象対応を維持する', (tester) async {
+    late Directory documentsDir;
+    late File sourceB;
+    ImportEvent? terminalEvent;
+
+    await tester.runAsync(() async {
+      sourceB = File('${photoDirectory.path}/source-B.jpg');
+      await sourceB.writeAsBytes(_pngBytes);
+      documentsDir = await Directory.systemTemp.createTemp(
+        'kokoitta-doc-import-mapping',
+      );
+    });
+    addTearDown(() async {
+      await tester.runAsync(() async {
+        try {
+          await documentsDir.delete(recursive: true);
+        } on FileSystemException {
+          // ベストエフォートで後始末する。
+        }
+      });
+    });
+
+    _mockPathProvider(documentsDir);
+    final missingSourceA = '${photoDirectory.path}/source-A-missing.jpg';
+    await tester.runAsync(() async {
+      expect(await File(missingSourceA).exists(), isFalse);
+    });
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        KokoittaApp(
+          cleanupRunner: _noopCleanup,
+          onImportEvent: (event) {
+            if (event.isTerminal) terminalEvent = event;
+          },
+        ),
+      );
+      await waitUntilLoaded(tester);
+      await sendImportEvent(
+        tester,
+        method: 'importResult',
+        arguments: <String, Object?>{
+          'requestId': 'request-forward-success',
+          'phase': 'completed',
+          'processed': 2,
+          'total': 2,
+          'succeeded': 2,
+          'failed': 0,
+          'terminal': true,
+          'successes': <Map<String, Object?>>[
+            <String, Object?>{
+              'path': missingSourceA,
+              'name': 'A.jpg',
+              'mimeType': 'image/jpeg',
+              'size': 1,
+            },
+            <String, Object?>{
+              'path': sourceB.path,
+              'name': 'B.jpg',
+              'mimeType': 'image/jpeg',
+              'size': 1,
+            },
+          ],
+          'failures': <Map<String, Object?>>[],
+        },
+      );
+    });
+
+    await tester.runAsync(() async {
+      final stored = await _waitForImportedPhotoJson(
+        documentsDir.path,
+        timeout: const Duration(seconds: 20),
+      );
+      final trips = stored!['trips'] as List;
+      final storedPhotos = trips.single['photos'] as List;
+      expect(storedPhotos, hasLength(1));
+      expect((storedPhotos.single as Map<String, dynamic>)['originalName'], 'B.jpg');
+    });
+
+    expect(terminalEvent, isNotNull);
+    expect(terminalEvent!.phase, ImportPhase.partialFailure);
+    expect(terminalEvent!.succeeded, 1);
+    expect(terminalEvent!.successes, hasLength(1));
+    expect(terminalEvent!.successes.single.path, sourceB.path);
+    expect(terminalEvent!.successes.single.name, 'B.jpg');
+    expect(terminalEvent!.failures, hasLength(1));
+    expect(terminalEvent!.failures.single.index, 0);
+    expect(terminalEvent!.failures.single.errorCode, 'copy_failed');
+    expect(terminalEvent!.failed, 1);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('起動時cleanupと共有取り込みは同一キューで直列化され、新規写真が残る', (tester) async {

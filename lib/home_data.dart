@@ -1,10 +1,18 @@
 part of 'main.dart';
 
 class _CopiedImportResult {
-  const _CopiedImportResult({required this.photos, required this.failures});
+  const _CopiedImportResult({
+    required this.photos,
+    required this.failures,
+    this.successfulFiles = const <ImportedFile>[],
+  });
 
   final List<Photo> photos;
   final List<ImportFailure> failures;
+  /// Shared inputs corresponding to [photos], in the same order.
+  ///
+  /// Picker imports do not use this mapping and leave it empty.
+  final List<ImportedFile> successfulFiles;
 }
 
 extension _HomeDataActions on _HomePageState {
@@ -118,6 +126,7 @@ extension _HomeDataActions on _HomePageState {
 
   Future<ImportEvent?> _importSharedUris(ImportEvent source) async {
     var copiedCount = 0;
+    var successfulFiles = const <ImportedFile>[];
     var failures = <ImportFailure>[...source.failures];
     try {
       await _coordinator.runMutation(() async {
@@ -146,9 +155,11 @@ extension _HomeDataActions on _HomePageState {
         final copied = await _copySharedFiles(uniqueFiles);
         failures = <ImportFailure>[...failures, ...copied.failures];
         copiedCount = copied.photos.length;
+        successfulFiles = copied.successfulFiles;
         if (_cancelledImportRequestIds.contains(source.requestId)) {
           await _deleteFiles(copied.photos);
           copiedCount = 0;
+          successfulFiles = const <ImportedFile>[];
           return;
         }
         if (copied.photos.isEmpty) return;
@@ -178,6 +189,8 @@ extension _HomeDataActions on _HomePageState {
           await _commitData(next);
         } catch (_) {
           await _deleteFiles(copied.photos);
+          copiedCount = 0;
+          successfulFiles = const <ImportedFile>[];
           rethrow;
         }
         // 保存（commit）中のUIキャンセルは保存完了後にしか検出できない。
@@ -187,6 +200,7 @@ extension _HomeDataActions on _HomePageState {
           _updateState(() => _data = previousData);
           await _deleteFiles(copied.photos);
           copiedCount = 0;
+          successfulFiles = const <ImportedFile>[];
           return;
         }
       });
@@ -217,7 +231,7 @@ extension _HomeDataActions on _HomePageState {
       succeeded: copiedCount,
       failed: failures.length,
       isTerminal: true,
-      successes: source.successes.take(copiedCount).toList(growable: false),
+      successes: successfulFiles,
       failures: failures,
     );
     if (completed.phase == ImportPhase.completed) {
@@ -235,6 +249,7 @@ extension _HomeDataActions on _HomePageState {
     final photosDirectory = Directory('${directory.path}/photos');
     await photosDirectory.create(recursive: true);
     final copied = <Photo>[];
+    final successfulFiles = <ImportedFile>[];
     final failures = <ImportFailure>[];
     try {
       for (var index = 0; index < files.length; index++) {
@@ -257,6 +272,7 @@ extension _HomeDataActions on _HomePageState {
               mimeType: imported.mimeType,
             ),
           );
+          successfulFiles.add(imported);
         } catch (error) {
           failures.add(
             ImportFailure(
@@ -272,7 +288,11 @@ extension _HomeDataActions on _HomePageState {
         await _deleteTemporarySharedFiles(files.map((file) => file.path)),
       );
     }
-    return _CopiedImportResult(photos: copied, failures: failures);
+    return _CopiedImportResult(
+      photos: copied,
+      failures: failures,
+      successfulFiles: successfulFiles,
+    );
   }
 
   Future<List<ImportFailure>> _deleteTemporarySharedFiles(
