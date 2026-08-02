@@ -14,6 +14,7 @@ import 'models.dart';
 import 'offline_japan_map.dart';
 import 'operation_coordinator.dart';
 import 'photo.dart';
+import 'import_progress.dart';
 import 'storage_cleanup.dart';
 import 'trip_store.dart';
 import 'validators.dart';
@@ -122,15 +123,21 @@ class _HomePageState extends State<HomePage> {
 
   late final OperationCoordinator _coordinator;
   late final CleanupRunner _cleanupRunner;
-  AppData _data = AppData.empty();
   late final Future<void> _initialization;
+  AppData _data = AppData.empty();
   bool _isLoading = true;
   String? _loadError;
   int _tab = 0;
-  int? _importCompleted;
-  int? _importTotal;
+  final ImportRequestGate _importRequestGate = ImportRequestGate();
+  final Set<String> _cancelledImportRequestIds = <String>{};
+  final Set<String> _terminalImportRequestIds = <String>{};
+  ImportEvent? _importEvent;
   bool _isCleanupRunning = false;
   StreamSubscription<OperationStatus>? _statusSub;
+
+  /// 防御用に保持するrequestId集合の上限。Android側はrequestIdを毎回ユニークに
+  /// 発行するため、ここに残るのは直近の終了・キャンセル履歴だけでよい。
+  static const int _maxTrackedImportRequestIds = 64;
 
   @override
   void initState() {
@@ -156,6 +163,45 @@ class _HomePageState extends State<HomePage> {
   void _updateState(VoidCallback update) {
     if (!mounted) return;
     setState(update);
+  }
+
+  bool get _isImportBusy => _importEvent != null && !_importEvent!.isTerminal;
+
+  /// 終了・キャンセル済みrequestIdを上限付きで記録する。
+  ///
+  /// 挿入順を保持するLinkedHashSetの先頭が最古エントリのため、上限超過時は
+  /// 古いものから除去して無制限成長を防ぐ。requestIdはAndroid側で毎回ユニーク
+  /// 化されるため、この防御履歴は直近の重複イベント対策としてのみ機能する。
+  void _rememberImportRequestId(Set<String> tracked, String requestId) {
+    tracked.add(requestId);
+    while (tracked.length > _maxTrackedImportRequestIds) {
+      tracked.remove(tracked.first);
+    }
+  }
+
+  void _setImportEvent(ImportEvent event) {
+    if (!_importRequestGate.accepts(event.requestId)) return;
+    _updateState(() => _importEvent = event);
+    if (event.isTerminal) {
+      _rememberImportRequestId(_terminalImportRequestIds, event.requestId);
+      _importRequestGate.finish(event.requestId);
+    }
+  }
+
+  Future<void> _cancelImport() async {
+    final event = _importEvent;
+    if (event == null || event.isTerminal) return;
+    _rememberImportRequestId(_cancelledImportRequestIds, event.requestId);
+    try {
+      await _shareChannel.invokeMethod<void>('cancelSharedImport');
+    } on MissingPluginException {
+      // The normal picker has no native session to cancel.
+    } on PlatformException {
+      // The local cancellation state still prevents a later commit.
+    }
+    _setImportEvent(
+      event.copyWith(phase: ImportPhase.cancelled, isTerminal: true),
+    );
   }
 
   @override

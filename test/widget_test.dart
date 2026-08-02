@@ -12,6 +12,7 @@ import 'package:kokoitta_app/operation_coordinator.dart';
 import 'package:kokoitta_app/storage_cleanup.dart';
 import 'package:kokoitta_app/trip_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 /// 最小の有効な1x1 PNG。
 final List<int> _pngBytes = base64Decode(
@@ -87,6 +88,183 @@ Map<String, dynamic>? _findCopiedPhoto(
   return null;
 }
 
+/// 保存JSONに含まれる旅行数が [expected] 件になるまで期限付きでポーリングする。
+///
+/// 書き込み途中の一時的な失敗（空文字列、デコード失敗）は期限まで再試行し、
+/// タイムアウト時は最後のJSONとエラーを失敗メッセージに含める。
+Future<Map<String, dynamic>?> _waitForTripCount(
+  int expected, {
+  required Duration timeout,
+}) async {
+  final preferences = await SharedPreferences.getInstance();
+  final deadline = DateTime.now().add(timeout);
+  Object? lastError;
+  String? lastRaw;
+  while (DateTime.now().isBefore(deadline)) {
+    try {
+      lastRaw = preferences.getString(TripStore.dataKey);
+      if (lastRaw == null || lastRaw.isEmpty) {
+        lastError = StateError('保存データがまだ書き込まれていません');
+      } else {
+        final decoded = jsonDecode(lastRaw) as Map<String, dynamic>;
+        final trips = decoded['trips'];
+        if (trips is List && trips.length == expected) return decoded;
+        lastError = StateError('旅行数が$expected件ではありません');
+      }
+    } on FormatException catch (error) {
+      lastError = error;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+  fail(
+    '保存JSONの旅行数が$expected件になるのをタイムアウトしました。'
+    '上限: $timeout。最終エラー: $lastError。最終JSON: $lastRaw',
+  );
+}
+
+/// 保存(commit)の最初の書き込みが始まるのを期限付きでポーリングする。
+///
+/// [Future.timeout] はfake async / runAsync間のzone境界で再開が信用できない
+/// ため、completerの状態を実時間ポーリングで確認する。
+Future<void> _waitForImportSaveStarted(
+  _HoldingPrefsStore store, {
+  required Duration timeout,
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    if (store.importSaveStarted.isCompleted) return;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+  fail('保存(commit)の書き込みが始まるのをタイムアウトしました。上限: $timeout');
+}
+
+/// [store] のdataKey書き込みが [expected] 件になるのを期限付きでポーリングする。
+///
+/// gate解放後のアプリ側マイクロタスクは実時間待ちの間に処理される。
+Future<void> _waitForDataKeyWrites(
+  _HoldingPrefsStore store,
+  int expected, {
+  required Duration timeout,
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    if (store.dataKeyWrites.length >= expected) return;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+  fail(
+    'dataKey書き込みが$expected件になるのをタイムアウトしました。'
+    '上限: $timeout。現在: ${store.dataKeyWrites.length}',
+  );
+}
+
+/// 取り込み完了を表すimportResultイベントのペイロードを組み立てる。
+Map<String, Object?> importResultEvent({
+  required String requestId,
+  required String path,
+  String name = 'shared.jpg',
+}) {
+  return <String, Object?>{
+    'requestId': requestId,
+    'phase': 'completed',
+    'processed': 1,
+    'total': 1,
+    'succeeded': 1,
+    'failed': 0,
+    'terminal': true,
+    'successes': <Map<String, Object?>>[
+      <String, Object?>{
+        'path': path,
+        'name': name,
+        'mimeType': 'image/jpeg',
+        'size': 1,
+      },
+    ],
+    'failures': <Map<String, Object?>>[],
+  };
+}
+
+/// 保存(commit)の書き込みを [release] が完了するまで保留するprefsストア。
+///
+/// commit保存の開始検知と、dataKeyへの書き込み順序の検証に使う。
+class _HoldingPrefsStore extends InMemorySharedPreferencesStore {
+  _HoldingPrefsStore() : super.empty();
+
+  /// 非nullの間、全てのsetValueをこのFutureの完了までブロックする。
+  Completer<void>? release;
+
+  /// [release] をセットした後の最初のsetValueで完了する。
+  final Completer<void> importSaveStarted = Completer<void>();
+
+  /// `flutter.` 付きdataKeyへ実際に書き込まれた値の履歴。
+  final List<String> dataKeyWrites = <String>[];
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async {
+    final gate = release;
+    if (gate != null && !importSaveStarted.isCompleted) {
+      importSaveStarted.complete();
+    }
+    if (gate != null) await gate.future;
+    // gate稼働中（=コミット保存の保留期間）のdataKey書き込みだけを記録する。
+    // 起動時のcanonical保存は検証対象外。
+    if (gate != null && key == 'flutter.${TripStore.dataKey}') {
+      dataKeyWrites.add(value as String);
+    }
+    return super.setValue(valueType, key, value);
+  }
+}
+
+/// 全ての読み書きが失敗するprefsストア。ロード失敗時の挙動検証用。
+class _ThrowingPrefsStore extends InMemorySharedPreferencesStore {
+  _ThrowingPrefsStore() : super.empty();
+
+  int writeCount = 0;
+
+  @override
+  Future<Map<String, Object>> getAll() {
+    throw StateError('読み込み失敗のテスト用');
+  }
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) {
+    writeCount += 1;
+    throw StateError('書き込み失敗のテスト用');
+  }
+}
+
+/// path_providerのモックを登録し、テスト終了時に解除する。
+void _mockPathProvider(Directory documentsDir) {
+  const pathChannel = MethodChannel('plugins.flutter.io/path_provider');
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(pathChannel, (call) async {
+        if (call.method == 'getApplicationDocumentsDirectory') {
+          return documentsDir.path;
+        }
+        return null;
+      });
+  addTearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathChannel, null);
+  });
+}
+
+/// テスト用の一時documentsディレクトリを作成し、後始末を登録する。
+Future<Directory> createDocumentsDir(WidgetTester tester) async {
+  final documentsDir = (await tester.runAsync(
+    () => Directory.systemTemp.createTemp('kokoitta-doc-dir'),
+  ))!;
+  addTearDown(() async {
+    await tester.runAsync(() async {
+      try {
+        await documentsDir.delete(recursive: true);
+      } on FileSystemException {
+        // ベストエフォートで後始末する。
+      }
+    });
+  });
+  return documentsDir;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('com.kaenozu.kokoitta/share');
@@ -155,6 +333,50 @@ void main() {
         .setMockMethodCallHandler(channel, null);
   });
 
+  /// 共有イベントをアプリ側ハンドラへ配信する。
+  ///
+  /// [waitForReply] がtrueのときはハンドラの完了（=終端イベントの取り込み
+  /// 完了）まで待つ。保存が保留されるキャンセル検証ではfalseにして配信のみ
+  /// 行い、進行中の取り込みを妨げない。
+  Future<void> sendImportEvent(
+    WidgetTester tester, {
+    required String method,
+    required Map<String, Object?> arguments,
+    bool waitForReply = true,
+  }) async {
+    final reply = TestDefaultBinaryMessengerBinding
+        .instance
+        .defaultBinaryMessenger
+        .handlePlatformMessage(
+          channel.name,
+          StandardMethodCodec().encodeMethodCall(MethodCall(method, arguments)),
+          null,
+        );
+    if (waitForReply) await reply;
+    await tester.pump();
+  }
+
+  /// 起動時のロード（と初期保存）が終わり、FABが表示されるまで待つ。
+  ///
+  /// 実I/Oの完了を待つrunAsync中で使う。load中にprefsをブロックすると
+  /// deadlockするため、gateをかける前に必ず待つ。
+  Future<void> waitUntilLoaded(WidgetTester tester) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (DateTime.now().isBefore(deadline) &&
+        tester.widgetList(find.text('写真を追加')).isEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await tester.pump();
+    }
+    expect(find.text('写真を追加'), findsOneWidget);
+  }
+
+  /// 共有元の一時ファイルを写真用ディレクトリに作る。
+  Future<File> createSourceFile(WidgetTester tester, String name) async {
+    final file = File('${photoDirectory.path}/$name');
+    await tester.runAsync(() => file.writeAsBytes(_pngBytes));
+    return file;
+  }
+
   testWidgets('ホームに地図と旅行タブを表示する', (tester) async {
     await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
     await tester.pump(const Duration(milliseconds: 100));
@@ -171,6 +393,50 @@ void main() {
       find.byKey(const ValueKey<String>('prefecture-map-47')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('共有importのprogressを表示し古いrequestのeventを無視する', (tester) async {
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    Future<void> sendNativeEvent(
+      String method,
+      Map<String, Object?> args,
+    ) async {
+      final done = Completer<ByteData?>();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            channel.name,
+            const StandardMethodCodec().encodeMethodCall(
+              MethodCall(method, args),
+            ),
+            done.complete,
+          );
+      await done.future;
+      await tester.pump();
+    }
+
+    await sendNativeEvent('importProgress', <String, Object?>{
+      'requestId': 'request-b',
+      'phase': 'copying',
+      'processed': 1,
+      'total': 2,
+      'succeeded': 1,
+      'failed': 0,
+      'terminal': false,
+    });
+    expect(find.text('取り込み 1 / 2'), findsOneWidget);
+
+    await sendNativeEvent('importProgress', <String, Object?>{
+      'requestId': 'request-a',
+      'phase': 'copying',
+      'processed': 2,
+      'total': 2,
+      'succeeded': 2,
+      'failed': 0,
+      'terminal': false,
+    });
+    expect(find.text('取り込み 1 / 2'), findsOneWidget);
   });
 
   testWidgets('地図タップで状態を保存し再起動後も維持する', (tester) async {
@@ -547,6 +813,200 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(log, <String>['cleanup:start', 'cleanup:end']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('同一URIセットをrequestIdを変えて2回共有すると両方取り込まれる', (tester) async {
+    final source = await createSourceFile(tester, 'shared_reuse_source.jpg');
+    final documentsDir = await createDocumentsDir(tester);
+    _mockPathProvider(documentsDir);
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
+      await sendImportEvent(
+        tester,
+        method: 'importResult',
+        arguments: importResultEvent(requestId: 'request-1', path: source.path),
+      );
+      // 1回目の取り込みが一時ファイルを削除するため、2回目は再作成する。
+      await source.writeAsBytes(_pngBytes);
+      await sendImportEvent(
+        tester,
+        method: 'importResult',
+        arguments: importResultEvent(requestId: 'request-2', path: source.path),
+      );
+    });
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // 同じURIセットでもrequestIdが新しければ2回目の共有も取り込まれる。
+    final decoded = await tester.runAsync(
+      () => _waitForTripCount(2, timeout: const Duration(seconds: 20)),
+    );
+    final trips = decoded!['trips'] as List<dynamic>;
+    expect(trips.length, 2);
+    expect((trips[0] as Map<dynamic, dynamic>)['title'], '共有からのおでかけ 1');
+    expect((trips[1] as Map<dynamic, dynamic>)['title'], '共有からのおでかけ 2');
+    final photos = <dynamic>[
+      ...(trips[0] as Map<dynamic, dynamic>)['photos'] as List<dynamic>,
+      ...(trips[1] as Map<dynamic, dynamic>)['photos'] as List<dynamic>,
+    ];
+    expect(photos.length, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('取り込み中に別requestIdの共有イベントが届いても進行中の取り込みは失われない', (tester) async {
+    final sourceA = await createSourceFile(tester, 'shared_busy_source_a.jpg');
+    final sourceB = await createSourceFile(tester, 'shared_busy_source_b.jpg');
+    final documentsDir = await createDocumentsDir(tester);
+    _mockPathProvider(documentsDir);
+
+    final store = _HoldingPrefsStore();
+    SharedPreferencesStorePlatform.instance = store;
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
+      await waitUntilLoaded(tester);
+
+      store.release = Completer<void>();
+      // 取り込みAが保存(commit)でブロックされている間に、別requestIdの
+      // 終端イベントBを配信する。
+      await sendImportEvent(
+        tester,
+        method: 'importResult',
+        arguments: importResultEvent(
+          requestId: 'request-a',
+          path: sourceA.path,
+        ),
+        waitForReply: false,
+      );
+      await _waitForImportSaveStarted(
+        store,
+        timeout: const Duration(seconds: 10),
+      );
+      await tester.pump();
+      await sendImportEvent(
+        tester,
+        method: 'importResult',
+        arguments: importResultEvent(
+          requestId: 'request-b',
+          path: sourceB.path,
+        ),
+      );
+      // Bはgateがbusyのため無視され、Aの進行表示が維持される。
+      expect(find.text('取り込み 1 / 1'), findsOneWidget);
+
+      store.release!.complete();
+    });
+    final decoded = await tester.runAsync(
+      () => _waitForTripCount(1, timeout: const Duration(seconds: 20)),
+    );
+    final trips = decoded!['trips'] as List<dynamic>;
+    expect(trips.length, 1);
+    expect((trips[0] as Map<dynamic, dynamic>)['title'], '共有からのおでかけ 1');
+    // Bの取り込みは実行されていない（一時ファイルも削除されていない）。
+    await tester.runAsync(() async {
+      expect(await sourceB.exists(), isTrue);
+    });
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('保存(commit)中のキャンセルはストアをpreviousDataへ巻き戻す', (tester) async {
+    final source = await createSourceFile(tester, 'shared_cancel_source.jpg');
+    final documentsDir = await createDocumentsDir(tester);
+    _mockPathProvider(documentsDir);
+
+    final store = _HoldingPrefsStore();
+    SharedPreferencesStorePlatform.instance = store;
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
+      await waitUntilLoaded(tester);
+
+      store.release = Completer<void>();
+      await sendImportEvent(
+        tester,
+        method: 'importResult',
+        arguments: importResultEvent(requestId: 'request-c', path: source.path),
+        waitForReply: false,
+      );
+      // commit保存がgateでブロックされている間にUIキャンセルする。
+      await _waitForImportSaveStarted(
+        store,
+        timeout: const Duration(seconds: 10),
+      );
+      await tester.pump();
+      expect(find.text('キャンセル'), findsOneWidget);
+      await tester.tap(find.text('キャンセル'));
+      await tester.pump();
+      store.release!.complete();
+    });
+    // gate解放後のcommit→巻き戻しの書き込みは実時間待ちで完了を待つ。
+    await tester.runAsync(
+      () =>
+          _waitForDataKeyWrites(store, 2, timeout: const Duration(seconds: 10)),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // commit→巻き戻しの順にdataKeyへ書き込まれていること。
+    expect(store.dataKeyWrites.length, 2);
+    int tripsCount(String raw) =>
+        ((jsonDecode(raw) as Map<String, dynamic>)['trips'] as List).length;
+    expect(tripsCount(store.dataKeyWrites[0]), 1);
+    expect(tripsCount(store.dataKeyWrites[1]), 0);
+    // 最終的な保存状態が0件に戻っていること。
+    final preferences = await SharedPreferences.getInstance();
+    final finalRaw = preferences.getString(TripStore.dataKey);
+    expect(finalRaw, isNotNull);
+    expect(tripsCount(finalRaw!), 0);
+    // キャンセルした取り込みの成功SnackBarは出ないこと。
+    expect(find.textContaining('取り込みました'), findsNothing);
+    // コピーされた写真ファイルも削除されていること。
+    await tester.runAsync(() async {
+      final photosDir = Directory('${documentsDir.path}/photos');
+      if (await photosDir.exists()) {
+        expect(await photosDir.list().toList(), isEmpty);
+      }
+    });
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('保存データのロードに失敗したら共有イベントを取り込まない', (tester) async {
+    final source = await createSourceFile(
+      tester,
+      'shared_load_error_source.jpg',
+    );
+    final documentsDir = await createDocumentsDir(tester);
+    _mockPathProvider(documentsDir);
+
+    final store = _ThrowingPrefsStore();
+    SharedPreferencesStorePlatform.instance = store;
+
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('保存データを読み込めませんでした'), findsOneWidget);
+
+    await tester.runAsync(() async {
+      await sendImportEvent(
+        tester,
+        method: 'importResult',
+        arguments: importResultEvent(
+          requestId: 'request-load-error',
+          path: source.path,
+        ),
+      );
+    });
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // ロード失敗UIが維持され、取り込みも実行されていないこと。
+    expect(find.text('保存データを読み込めませんでした'), findsOneWidget);
+    expect(find.textContaining('取り込みました'), findsNothing);
+    expect(store.writeCount, 0);
+    await tester.runAsync(() async {
+      expect(await source.exists(), isTrue);
+    });
     expect(tester.takeException(), isNull);
   });
 }

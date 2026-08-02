@@ -1,5 +1,12 @@
 part of 'main.dart';
 
+class _CopiedImportResult {
+  const _CopiedImportResult({required this.photos, required this.failures});
+
+  final List<Photo> photos;
+  final List<ImportFailure> failures;
+}
+
 extension _HomeDataActions on _HomePageState {
   Future<void> _runStartupCleanup() async {
     try {
@@ -45,25 +52,17 @@ extension _HomeDataActions on _HomePageState {
 
   Future<void> _consumeInitialSharedUris() async {
     try {
-      final result = await _HomePageState._shareChannel
+      final legacy = await _HomePageState._shareChannel
           .invokeMethod<Map<dynamic, dynamic>>('getSharedUris');
-      if (result == null) return;
-      final overLimitCount = result['overLimitCount'] as int? ?? 0;
-      if (overLimitCount > 0) {
-        _showMessage('300枚の上限を超えています。上限内の枚数を選び直してから取り込んでください');
-        return;
-      }
-      final successes = result['successes'] as List<dynamic>? ?? <dynamic>[];
-      final paths = successes
-          .map((e) => (e as Map<dynamic, dynamic>)['path'] as String)
-          .toList();
-      final failureCount =
-          ((result['failures'] as List<dynamic>?)?.length ?? 0);
-      if (paths.isEmpty) {
-        if (failureCount > 0) _showMessage('$failureCount件の取り込みに失敗しました');
-        return;
-      }
-      await _importSharedUris(paths, failureCount: failureCount);
+      if (legacy == null || legacy.isEmpty) return;
+      final event = ImportEventParser.parseLegacyResult(legacy);
+      if (event.total == 0) return;
+      if (!_acceptIncomingImportRequest(event.requestId)) return;
+      _setImportEvent(
+        event.copyWith(phase: ImportPhase.saving, isTerminal: false),
+      );
+      final result = await _importSharedUris(event);
+      if (result != null) _setImportEvent(result);
     } on MissingPluginException {
       // Widget tests and unsupported platforms do not provide the Android channel.
     } on PlatformException catch (error) {
@@ -72,43 +71,43 @@ extension _HomeDataActions on _HomePageState {
   }
 
   Future<dynamic> _handleShareMethod(MethodCall call) async {
-    if (call.method == 'sharedProgress') {
-      final args = call.arguments;
-      if (args is Map) {
-        _updateState(() {
-          _importCompleted = args['completed'] as int? ?? 0;
-          _importTotal = args['total'] as int? ?? 0;
-        });
-      }
-      return null;
-    }
-    if (call.method != 'sharedUris') return null;
-    _updateState(() {
-      _importCompleted = null;
-      _importTotal = null;
-    });
+    if (call.arguments is! Map) return null;
+    // 永続データのロード完了を待つ。ロード失敗時は空のAppDataで共有イベントを
+    // 処理して既存の保存データを上書きしないよう、イベントを無視する。
     await _initialization;
     if (_loadError != null) return null;
-    final arguments = call.arguments;
-    if (arguments is Map) {
-      final overLimitCount = arguments['overLimitCount'] as int? ?? 0;
-      if (overLimitCount > 0) {
-        _showMessage('300枚の上限を超えています。上限内の枚数を選び直してから取り込んでください');
+    try {
+      final arguments = Map<dynamic, dynamic>.from(call.arguments as Map);
+      final event = switch (call.method) {
+        'importProgress' => ImportEventParser.parseProgress(arguments),
+        'importResult' => ImportEventParser.parseResult(arguments),
+        _ => null,
+      };
+      if (event == null || !_acceptIncomingImportRequest(event.requestId)) {
         return null;
       }
-      final successes = arguments['successes'] as List<dynamic>? ?? <dynamic>[];
-      final paths = successes
-          .map((e) => (e as Map<dynamic, dynamic>)['path'] as String)
-          .toList();
-      final failureCount =
-          ((arguments['failures'] as List<dynamic>?)?.length ?? 0);
-      if (paths.isEmpty) {
-        if (failureCount > 0) _showMessage('$failureCount件の取り込みに失敗しました');
+      if (!event.isTerminal) {
+        _setImportEvent(event);
         return null;
       }
-      await _importSharedUris(paths, failureCount: failureCount);
+      _setImportEvent(
+        event.copyWith(phase: ImportPhase.saving, isTerminal: false),
+      );
+      final result = await _importSharedUris(event);
+      if (result != null) _setImportEvent(result);
+    } on FormatException catch (error) {
+      _showError('共有写真の取り込み', error);
+    } on MissingPluginException {
+      // Widget tests and unsupported platforms do not provide the Android channel.
     }
     return null;
+  }
+
+  bool _acceptIncomingImportRequest(String requestId) {
+    if (_terminalImportRequestIds.contains(requestId)) return false;
+    if (_importRequestGate.accepts(requestId)) return true;
+    if (_importRequestGate.isActive) return false;
+    return _importRequestGate.start(requestId);
   }
 
   Future<void> _commitData(AppData next) async {
@@ -117,24 +116,44 @@ extension _HomeDataActions on _HomePageState {
     _updateState(() => _data = next);
   }
 
-  Future<void> _importSharedUris(
-    List<String> uris, {
-    int failureCount = 0,
-  }) async {
-    if (uris.isEmpty || _loadError != null) return;
+  Future<ImportEvent?> _importSharedUris(ImportEvent source) async {
+    var copiedCount = 0;
+    var failures = <ImportFailure>[...source.failures];
     try {
       await _coordinator.runMutation(() async {
-        final uniqueUris = uris.toSet().toList(growable: false);
+        final uniqueFiles = <ImportedFile>[];
+        final seen = <String>{};
+        for (final file in source.successes) {
+          if (seen.add(file.path)) uniqueFiles.add(file);
+        }
         final available = _HomePageState._maxPhotos - _data.photoCount;
-        if (available <= 0 || uniqueUris.length > available) {
-          await _deleteTemporarySharedFiles(uniqueUris);
-          _showMessage('無料版の写真上限300枚を超えるため取り込めません');
+        if (available <= 0 || uniqueFiles.length > available) {
+          failures.addAll(
+            await _deleteTemporarySharedFiles(
+              uniqueFiles.map((file) => file.path),
+            ),
+          );
+          failures.add(
+            const ImportFailure(
+              index: 0,
+              errorCode: 'photo_quota_exceeded',
+              reason: '無料版の写真上限300枚を超えるため取り込めません',
+            ),
+          );
           return;
         }
 
-        final copied = await _copySharedFiles(uniqueUris);
-        if (copied.isEmpty) return;
+        final copied = await _copySharedFiles(uniqueFiles);
+        failures = <ImportFailure>[...failures, ...copied.failures];
+        copiedCount = copied.photos.length;
+        if (_cancelledImportRequestIds.contains(source.requestId)) {
+          await _deleteFiles(copied.photos);
+          copiedCount = 0;
+          return;
+        }
+        if (copied.photos.isEmpty) return;
 
+        final previousData = _data;
         final createsTrip = _data.trips.length < _HomePageState._maxTrips;
         AppData next;
         if (createsTrip) {
@@ -143,77 +162,140 @@ extension _HomeDataActions on _HomePageState {
             Trip(
               id: createEntityId('trip'),
               title: '共有からのおでかけ ${_data.trips.length + 1}',
-              photos: copied,
+              photos: copied.photos,
             ),
           );
         } else {
           next = _data.copyWith(
-            unassignedPhotos: <Photo>[..._data.unassignedPhotos, ...copied],
+            unassignedPhotos: <Photo>[
+              ..._data.unassignedPhotos,
+              ...copied.photos,
+            ],
           );
         }
 
         try {
           await _commitData(next);
         } catch (_) {
-          await _deleteFiles(copied);
+          await _deleteFiles(copied.photos);
           rethrow;
         }
-        var message = createsTrip
-            ? '${copied.length}枚を共有から取り込みました'
-            : '${copied.length}枚を旅行未設定へ取り込みました';
-        if (failureCount > 0) {
-          message += '（$failureCount件失敗）';
+        // 保存（commit）中のUIキャンセルは保存完了後にしか検出できない。
+        // ストアとメモリをpreviousDataへ巻き戻し、写真も削除する。
+        if (_cancelledImportRequestIds.contains(source.requestId)) {
+          await _store.save(previousData);
+          _updateState(() => _data = previousData);
+          await _deleteFiles(copied.photos);
+          copiedCount = 0;
+          return;
         }
-        _showMessage(message);
       });
     } catch (error) {
-      _showError('共有写真の取り込み', error);
+      failures.add(
+        ImportFailure(
+          index: 0,
+          errorCode: 'save_failed',
+          reason: _readableError(error),
+        ),
+      );
     }
+    // キャンセル済みrequestの完了イベント・成功SnackBarは出さない。
+    // キャンセル時のUI表示（cancelled event）は_cancelImportが担う。
+    if (_cancelledImportRequestIds.contains(source.requestId)) {
+      return null;
+    }
+    final phase = failures.isEmpty
+        ? ImportPhase.completed
+        : copiedCount > 0
+        ? ImportPhase.partialFailure
+        : ImportPhase.failed;
+    final completed = ImportEvent(
+      requestId: source.requestId,
+      phase: phase,
+      processed: source.total,
+      total: source.total,
+      succeeded: copiedCount,
+      failed: failures.length,
+      isTerminal: true,
+      successes: source.successes.take(copiedCount).toList(growable: false),
+      failures: failures,
+    );
+    if (completed.phase == ImportPhase.completed) {
+      _showMessage('$copiedCount枚を共有から取り込みました');
+    } else if (completed.phase == ImportPhase.partialFailure) {
+      _showMessage('$copiedCount件を取り込みました（${failures.length}件失敗）');
+    } else {
+      _showMessage('共有写真の取り込みに失敗しました');
+    }
+    return completed;
   }
 
-  Future<List<Photo>> _copySharedFiles(List<String> paths) async {
+  Future<_CopiedImportResult> _copySharedFiles(List<ImportedFile> files) async {
     final directory = await getApplicationDocumentsDirectory();
     final photosDirectory = Directory('${directory.path}/photos');
     await photosDirectory.create(recursive: true);
     final copied = <Photo>[];
+    final failures = <ImportFailure>[];
     try {
-      for (var index = 0; index < paths.length; index++) {
-        final source = File(paths[index]);
-        if (!await source.exists()) continue;
-        final destination = File(
-          '${photosDirectory.path}/${createEntityId('shared')}-${index.toString().padLeft(3, '0')}${_safeExtension(source.path)}',
-        );
-        final copiedFile = await source.copy(destination.path);
-        // 撮影日時は不明のためnull。ファイル更新日時を撮影日時として
-        // 永続化してはならない（推測日時の保存禁止）。
-        copied.add(
-          Photo(
-            id: createPhotoId(),
-            file: copiedFile,
-            capturedAt: null,
-            originalName: _originalNameOfPath(source.path),
-            mimeType: _mimeTypeOf(source.path),
-          ),
-        );
+      for (var index = 0; index < files.length; index++) {
+        final imported = files[index];
+        final source = File(imported.path);
+        try {
+          if (!await source.exists()) {
+            throw const FileSystemException('一時ファイルが見つかりません');
+          }
+          final destination = File(
+            '${photosDirectory.path}/${createEntityId('shared')}-${index.toString().padLeft(3, '0')}${_safeExtension(imported.name)}',
+          );
+          final copiedFile = await source.copy(destination.path);
+          copied.add(
+            Photo(
+              id: createPhotoId(),
+              file: copiedFile,
+              capturedAt: null,
+              originalName: imported.name,
+              mimeType: imported.mimeType,
+            ),
+          );
+        } catch (error) {
+          failures.add(
+            ImportFailure(
+              index: index,
+              errorCode: 'copy_failed',
+              reason: _readableError(error),
+            ),
+          );
+        }
       }
-      return copied;
-    } catch (_) {
-      await _deleteFiles(copied);
-      rethrow;
     } finally {
-      await _deleteTemporarySharedFiles(paths);
+      failures.addAll(
+        await _deleteTemporarySharedFiles(files.map((file) => file.path)),
+      );
     }
+    return _CopiedImportResult(photos: copied, failures: failures);
   }
 
-  Future<void> _deleteTemporarySharedFiles(Iterable<String> paths) async {
+  Future<List<ImportFailure>> _deleteTemporarySharedFiles(
+    Iterable<String> paths,
+  ) async {
+    final failures = <ImportFailure>[];
+    var index = 0;
     for (final path in paths) {
       try {
         final file = File(path);
         if (await file.exists()) await file.delete();
-      } catch (_) {
-        // Cache cleanup failure must not discard an otherwise successful import.
+      } catch (error) {
+        failures.add(
+          ImportFailure(
+            index: index,
+            errorCode: 'temporary_cleanup_failed',
+            reason: _readableError(error),
+          ),
+        );
       }
+      index++;
     }
+    return failures;
   }
 
   Future<void> _addPhotos({String? tripId}) async {
@@ -223,52 +305,191 @@ extension _HomeDataActions on _HomePageState {
       maxWidth: 2048,
     );
     if (selected.isEmpty || !mounted) return;
+    final requestId = 'picker-${DateTime.now().microsecondsSinceEpoch}';
+    if (!_importRequestGate.start(requestId)) return;
+    void setPickerEvent({
+      required ImportPhase phase,
+      required int processed,
+      required int succeeded,
+      required int failed,
+      required bool terminal,
+      List<ImportFailure> failures = const <ImportFailure>[],
+    }) {
+      _setImportEvent(
+        ImportEvent(
+          requestId: requestId,
+          phase: phase,
+          processed: processed,
+          total: selected.length,
+          succeeded: succeeded,
+          failed: failed,
+          isTerminal: terminal,
+          failures: failures,
+        ),
+      );
+    }
+
+    setPickerEvent(
+      phase: ImportPhase.preparing,
+      processed: 0,
+      succeeded: 0,
+      failed: 0,
+      terminal: false,
+    );
 
     try {
       await _coordinator.runMutation(() async {
         final available = _HomePageState._maxPhotos - _data.photoCount;
         if (selected.length > available) {
+          const failure = ImportFailure(
+            index: 0,
+            errorCode: 'photo_quota_exceeded',
+            reason: '追加できる枚数の上限を超えています',
+          );
+          setPickerEvent(
+            phase: ImportPhase.failed,
+            processed: selected.length,
+            succeeded: 0,
+            failed: selected.length,
+            terminal: true,
+            failures: List<ImportFailure>.filled(selected.length, failure),
+          );
           _showMessage('追加できるのは残り$available枚です。枚数を減らして選び直してください');
           return;
         }
         if (tripId == null && _data.trips.length >= _HomePageState._maxTrips) {
+          setPickerEvent(
+            phase: ImportPhase.failed,
+            processed: selected.length,
+            succeeded: 0,
+            failed: selected.length,
+            terminal: true,
+            failures: List<ImportFailure>.filled(
+              selected.length,
+              const ImportFailure(
+                index: 0,
+                errorCode: 'trip_quota_exceeded',
+                reason: '旅行は10件までです',
+              ),
+            ),
+          );
           _showMessage('旅行は10件までです。既存旅行へ追加するか旅行を整理してください');
           return;
         }
 
-        final copied = await _copyPickedImages(selected);
-        if (copied.isEmpty) return;
+        setPickerEvent(
+          phase: ImportPhase.copying,
+          processed: 0,
+          succeeded: 0,
+          failed: 0,
+          terminal: false,
+        );
+        final copied = await _copyPickedImages(
+          selected,
+          onProgress: (processed, succeeded, failed) => setPickerEvent(
+            phase: ImportPhase.copying,
+            processed: processed,
+            succeeded: succeeded,
+            failed: failed,
+            terminal: false,
+          ),
+        );
+        if (_cancelledImportRequestIds.contains(requestId)) {
+          await _deleteFiles(copied.photos);
+          return;
+        }
+        if (copied.photos.isEmpty) {
+          setPickerEvent(
+            phase: ImportPhase.failed,
+            processed: selected.length,
+            succeeded: 0,
+            failed: copied.failures.length,
+            terminal: true,
+            failures: copied.failures,
+          );
+          return;
+        }
+        setPickerEvent(
+          phase: ImportPhase.saving,
+          processed: selected.length,
+          succeeded: copied.photos.length,
+          failed: copied.failures.length,
+          terminal: false,
+          failures: copied.failures,
+        );
+        final previousData = _data;
         final next = tripId == null
             ? addNewTrip(
                 _data,
                 Trip(
                   id: createEntityId('trip'),
                   title: '新しいおでかけ ${_data.trips.length + 1}',
-                  photos: copied,
+                  photos: copied.photos,
                 ),
               )
-            : addPhotosToTrip(_data, tripId, copied);
+            : addPhotosToTrip(_data, tripId, copied.photos);
 
         try {
           await _commitData(next);
         } catch (_) {
-          await _deleteFiles(copied);
+          await _deleteFiles(copied.photos);
           rethrow;
         }
-        _showMessage('${copied.length}枚を取り込みました');
+        // 保存（commit）中のUIキャンセルは保存完了後にしか検出できない。
+        // ストアとメモリをpreviousDataへ巻き戻し、写真も削除する。
+        if (_cancelledImportRequestIds.contains(requestId)) {
+          await _store.save(previousData);
+          _updateState(() => _data = previousData);
+          await _deleteFiles(copied.photos);
+          return;
+        }
+        final phase = copied.failures.isEmpty
+            ? ImportPhase.completed
+            : ImportPhase.partialFailure;
+        setPickerEvent(
+          phase: phase,
+          processed: selected.length,
+          succeeded: copied.photos.length,
+          failed: copied.failures.length,
+          terminal: true,
+          failures: copied.failures,
+        );
+        _showMessage(
+          copied.failures.isEmpty
+              ? '${copied.photos.length}枚を取り込みました'
+              : '${copied.photos.length}枚を取り込みました（${copied.failures.length}件失敗）',
+        );
       });
     } catch (error) {
+      setPickerEvent(
+        phase: ImportPhase.failed,
+        processed: selected.length,
+        succeeded: 0,
+        failed: selected.length,
+        terminal: true,
+        failures: <ImportFailure>[
+          ImportFailure(
+            index: 0,
+            errorCode: 'import_failed',
+            reason: _readableError(error),
+          ),
+        ],
+      );
       _showError('写真の取り込み', error);
     }
   }
 
-  Future<List<Photo>> _copyPickedImages(List<XFile> selected) async {
+  Future<_CopiedImportResult> _copyPickedImages(
+    List<XFile> selected, {
+    required void Function(int processed, int succeeded, int failed) onProgress,
+  }) async {
     final directory = await getApplicationDocumentsDirectory();
     final photosDirectory = Directory('${directory.path}/photos');
     await photosDirectory.create(recursive: true);
     final copied = <Photo>[];
-    try {
-      for (var index = 0; index < selected.length; index++) {
+    final failures = <ImportFailure>[];
+    for (var index = 0; index < selected.length; index++) {
+      try {
         final image = selected[index];
         final source = File(image.path);
         final safeName = image.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
@@ -287,12 +508,18 @@ extension _HomeDataActions on _HomePageState {
             mimeType: _mimeTypeOf(image.path),
           ),
         );
+      } catch (error) {
+        failures.add(
+          ImportFailure(
+            index: index,
+            errorCode: 'copy_failed',
+            reason: _readableError(error),
+          ),
+        );
       }
-      return copied;
-    } catch (_) {
-      await _deleteFiles(copied);
-      rethrow;
+      onProgress(index + 1, copied.length, failures.length);
     }
+    return _CopiedImportResult(photos: copied, failures: failures);
   }
 
   String? _mimeTypeOf(String path) {
@@ -309,11 +536,6 @@ extension _HomeDataActions on _HomePageState {
       'heif' => 'image/heif',
       _ => null,
     };
-  }
-
-  String? _originalNameOfPath(String path) {
-    final fileName = path.split(RegExp(r'[/\\]')).last;
-    return fileName.isEmpty ? null : fileName;
   }
 
   Future<void> _handleTripMenu(Trip trip, String action) async {
