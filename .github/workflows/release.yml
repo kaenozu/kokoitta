@@ -41,19 +41,32 @@ jobs:
           echo "::error::Manual releases must run from main (got $WORKFLOW_REF)."
           exit 1
 
-      - name: Checkout trusted main
+      - name: Checkout event commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Verify tagged commit belongs to main
-        if: github.event_name == 'push'
+      - name: Setup Java
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07  # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+
+      - name: Verify event commit belongs to main
         env:
           EVENT_COMMIT_SHA: ${{ github.sha }}
         run: |
-          if ! git merge-base --is-ancestor "$EVENT_COMMIT_SHA" HEAD; then
-            echo "::error::Release tag must point to a commit contained in main."
+          git fetch origin main --no-tags
+          if ! git merge-base --is-ancestor "$EVENT_COMMIT_SHA" origin/main; then
+            echo "::error::Release commit must be contained in main."
             exit 1
           fi
 
@@ -66,11 +79,7 @@ jobs:
           EVENT_COMMIT_SHA: ${{ github.sha }}
           RUN_NUMBER: ${{ github.run_number }}
         run: |
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            COMMIT_SHA="$(git rev-parse HEAD)"
-          else
-            COMMIT_SHA="$EVENT_COMMIT_SHA"
-          fi
+          COMMIT_SHA="$EVENT_COMMIT_SHA"
           SHORT_SHA="${COMMIT_SHA:0:7}"
           VERSION_CODE="$RUN_NUMBER"
 
@@ -142,8 +151,15 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2
         with:
+          flutter-version: '3.44.0'
           channel: stable
           cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07  # v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Install dependencies
         run: flutter pub get
@@ -161,6 +177,8 @@ jobs:
           echo "  Version name:     ${{ needs.validate.outputs.version }}"
           echo "  Version code:     ${{ needs.validate.outputs.version_code }}"
           echo "  Commit SHA:       ${{ needs.validate.outputs.commit_sha }}"
+          flutter --version
+          java -version
           echo "============================================"
 
       - name: Require signing secrets
