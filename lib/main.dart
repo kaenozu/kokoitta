@@ -211,7 +211,16 @@ class _HomePageState extends State<HomePage> {
       // The local cancellation state still prevents a later commit.
     }
     _setImportEvent(
-      event.copyWith(phase: ImportPhase.cancelled, isTerminal: true),
+      ImportEvent(
+        requestId: event.requestId,
+        phase: ImportPhase.cancelled,
+        processed: event.processed,
+        total: event.total,
+        succeeded: 0,
+        failed: event.failed,
+        isTerminal: true,
+        failures: event.failures,
+      ),
     );
   }
 
