@@ -81,11 +81,31 @@ class ImportEvent {
 }
 
 class ImportEventParser {
+  /// Parses a value received from the Android MethodChannel.
+  ///
+  /// The platform boundary is dynamic, so it is intentionally accepted as
+  /// [Object?] here rather than making the UI cast it to a Map first.
+  static ImportEvent parseMethodCall(String method, Object? raw) {
+    if (raw is! Map) {
+      throw const FormatException('import event must be a map');
+    }
+    final arguments = Map<dynamic, dynamic>.from(raw);
+    return switch (method) {
+      'importProgress' => parseProgress(arguments),
+      'importResult' => parseResult(arguments),
+      _ => throw FormatException('unknown import method: $method'),
+    };
+  }
+
   /// Compatibility reader for the pre-#30 cold-start response. New Android
   /// code sends importProgress/importResult events instead.
-  static ImportEvent parseLegacyResult(Map<dynamic, dynamic> raw) {
-    final rawSuccesses = raw['successes'] ?? const <Object?>[];
-    final rawFailures = raw['failures'] ?? const <Object?>[];
+  static ImportEvent parseLegacyResult(Object? raw) {
+    if (raw is! Map) {
+      throw const FormatException('invalid legacy import result');
+    }
+    final arguments = Map<dynamic, dynamic>.from(raw);
+    final rawSuccesses = arguments['successes'] ?? const <Object?>[];
+    final rawFailures = arguments['failures'] ?? const <Object?>[];
     if (rawSuccesses is! List || rawFailures is! List) {
       throw const FormatException('invalid legacy import result');
     }
@@ -173,7 +193,9 @@ class ImportEventParser {
     }
     final successes = _parseSuccesses(raw['successes']);
     final failures = _parseFailures(raw['failures']);
-    if (event.succeeded != successes.length ||
+    if (event.processed != event.total ||
+        event.succeeded + event.failed != event.total ||
+        event.succeeded != successes.length ||
         event.failed != failures.length) {
       throw const FormatException('result counters do not match records');
     }

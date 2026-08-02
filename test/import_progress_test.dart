@@ -3,6 +3,24 @@ import 'package:kokoitta_app/import_progress.dart';
 
 void main() {
   group('ImportEventParser', () {
+    test(
+      'method channel boundary safely rejects null, non-map, and unknown method',
+      () {
+        expect(
+          () => ImportEventParser.parseMethodCall('importResult', null),
+          throwsA(isA<FormatException>()),
+        );
+        expect(
+          () => ImportEventParser.parseMethodCall('importResult', 'not a map'),
+          throwsA(isA<FormatException>()),
+        );
+        expect(
+          () => ImportEventParser.parseMethodCall('other', <String, Object?>{}),
+          throwsA(isA<FormatException>()),
+        );
+      },
+    );
+
     test('parses a valid progress event', () {
       final event = ImportEventParser.parseProgress(<String, Object?>{
         'requestId': 'request-a',
@@ -77,6 +95,53 @@ void main() {
       );
     });
 
+    test('rejects terminal results whose counters are incomplete', () {
+      expect(
+        () => ImportEventParser.parseResult(<String, Object?>{
+          'requestId': 'request-a',
+          'phase': 'completed',
+          'processed': 1,
+          'total': 2,
+          'succeeded': 1,
+          'failed': 0,
+          'terminal': true,
+          'successes': <Object?>[
+            <String, Object?>{
+              'path': '/cache/photo.jpg',
+              'name': 'photo.jpg',
+              'mimeType': 'image/jpeg',
+              'size': 12,
+            },
+          ],
+          'failures': const <Object?>[],
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => ImportEventParser.parseProgress(<String, Object?>{
+          'phase': 'copying',
+          'processed': 0,
+          'total': 1,
+          'succeeded': 0,
+          'failed': 0,
+          'terminal': false,
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => ImportEventParser.parseProgress(<String, Object?>{
+          'requestId': 42,
+          'phase': 'copying',
+          'processed': 0,
+          'total': 1,
+          'succeeded': 0,
+          'failed': 0,
+          'terminal': false,
+        }),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
     test('parses partial result with typed file records', () {
       final result = ImportEventParser.parseResult(<String, Object?>{
         'requestId': 'request-a',
@@ -106,6 +171,39 @@ void main() {
       expect(result.phase, ImportPhase.partialFailure);
       expect(result.successes.single.path, '/cache/photo.jpg');
       expect(result.failures.single.errorCode, 'copy_failed');
+    });
+
+    test('rejects invalid success and failure record types', () {
+      final base = <String, Object?>{
+        'requestId': 'request-a',
+        'phase': 'failed',
+        'processed': 1,
+        'total': 1,
+        'succeeded': 0,
+        'failed': 1,
+        'terminal': true,
+        'successes': const <Object?>[],
+      };
+      expect(
+        () => ImportEventParser.parseResult(<String, Object?>{
+          ...base,
+          'failures': <Object?>['invalid'],
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => ImportEventParser.parseResult(<String, Object?>{
+          ...base,
+          'failures': <Object?>[
+            <String, Object?>{
+              'index': 0,
+              'errorCode': 'copy_failed',
+              'reason': 123,
+            },
+          ],
+        }),
+        throwsA(isA<FormatException>()),
+      );
     });
   });
 

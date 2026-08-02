@@ -1,10 +1,15 @@
 part of 'main.dart';
 
 class _CopiedImportResult {
-  const _CopiedImportResult({required this.photos, required this.failures});
+  const _CopiedImportResult({
+    required this.photos,
+    required this.failures,
+    this.successfulFiles = const <ImportedFile>[],
+  });
 
   final List<Photo> photos;
   final List<ImportFailure> failures;
+  final List<ImportedFile> successfulFiles;
 }
 
 extension _HomeDataActions on _HomePageState {
@@ -52,9 +57,10 @@ extension _HomeDataActions on _HomePageState {
 
   Future<void> _consumeInitialSharedUris() async {
     try {
-      final legacy = await _HomePageState._shareChannel
-          .invokeMethod<Map<dynamic, dynamic>>('getSharedUris');
-      if (legacy == null || legacy.isEmpty) return;
+      final legacy = await _HomePageState._shareChannel.invokeMethod<Object?>(
+        'getSharedUris',
+      );
+      if (legacy == null) return;
       final event = ImportEventParser.parseLegacyResult(legacy);
       if (event.total == 0) return;
       if (!_acceptIncomingImportRequest(event.requestId)) return;
@@ -65,25 +71,24 @@ extension _HomeDataActions on _HomePageState {
       if (result != null) _setImportEvent(result);
     } on MissingPluginException {
       // Widget tests and unsupported platforms do not provide the Android channel.
+    } on FormatException catch (error) {
+      _showError('共有写真の確認', error);
     } on PlatformException catch (error) {
       _showError('共有写真の確認', error);
     }
   }
 
   Future<dynamic> _handleShareMethod(MethodCall call) async {
-    if (call.arguments is! Map) return null;
     // 永続データのロード完了を待つ。ロード失敗時は空のAppDataで共有イベントを
     // 処理して既存の保存データを上書きしないよう、イベントを無視する。
     await _initialization;
     if (_loadError != null) return null;
     try {
-      final arguments = Map<dynamic, dynamic>.from(call.arguments as Map);
-      final event = switch (call.method) {
-        'importProgress' => ImportEventParser.parseProgress(arguments),
-        'importResult' => ImportEventParser.parseResult(arguments),
-        _ => null,
-      };
-      if (event == null || !_acceptIncomingImportRequest(event.requestId)) {
+      final event = ImportEventParser.parseMethodCall(
+        call.method,
+        call.arguments,
+      );
+      if (!_acceptIncomingImportRequest(event.requestId)) {
         return null;
       }
       if (!event.isTerminal) {
@@ -118,6 +123,7 @@ extension _HomeDataActions on _HomePageState {
 
   Future<ImportEvent?> _importSharedUris(ImportEvent source) async {
     var copiedCount = 0;
+    var successfulFiles = const <ImportedFile>[];
     var failures = <ImportFailure>[...source.failures];
     try {
       await _coordinator.runMutation(() async {
@@ -146,6 +152,7 @@ extension _HomeDataActions on _HomePageState {
         final copied = await _copySharedFiles(uniqueFiles);
         failures = <ImportFailure>[...failures, ...copied.failures];
         copiedCount = copied.photos.length;
+        successfulFiles = copied.successfulFiles;
         if (_cancelledImportRequestIds.contains(source.requestId)) {
           await _deleteFiles(copied.photos);
           copiedCount = 0;
@@ -217,7 +224,7 @@ extension _HomeDataActions on _HomePageState {
       succeeded: copiedCount,
       failed: failures.length,
       isTerminal: true,
-      successes: source.successes.take(copiedCount).toList(growable: false),
+      successes: successfulFiles,
       failures: failures,
     );
     if (completed.phase == ImportPhase.completed) {
@@ -235,6 +242,7 @@ extension _HomeDataActions on _HomePageState {
     final photosDirectory = Directory('${directory.path}/photos');
     await photosDirectory.create(recursive: true);
     final copied = <Photo>[];
+    final successfulFiles = <ImportedFile>[];
     final failures = <ImportFailure>[];
     try {
       for (var index = 0; index < files.length; index++) {
@@ -257,6 +265,7 @@ extension _HomeDataActions on _HomePageState {
               mimeType: imported.mimeType,
             ),
           );
+          successfulFiles.add(imported);
         } catch (error) {
           failures.add(
             ImportFailure(
@@ -272,7 +281,11 @@ extension _HomeDataActions on _HomePageState {
         await _deleteTemporarySharedFiles(files.map((file) => file.path)),
       );
     }
-    return _CopiedImportResult(photos: copied, failures: failures);
+    return _CopiedImportResult(
+      photos: copied,
+      failures: failures,
+      successfulFiles: successfulFiles,
+    );
   }
 
   Future<List<ImportFailure>> _deleteTemporarySharedFiles(
