@@ -123,6 +123,7 @@ class _HomePageState extends State<HomePage> {
 
   late final OperationCoordinator _coordinator;
   late final CleanupRunner _cleanupRunner;
+  late final Future<void> _initialization;
   AppData _data = AppData.empty();
   bool _isLoading = true;
   String? _loadError;
@@ -134,13 +135,17 @@ class _HomePageState extends State<HomePage> {
   bool _isCleanupRunning = false;
   StreamSubscription<OperationStatus>? _statusSub;
 
+  /// 防御用に保持するrequestId集合の上限。Android側はrequestIdを毎回ユニークに
+  /// 発行するため、ここに残るのは直近の終了・キャンセル履歴だけでよい。
+  static const int _maxTrackedImportRequestIds = 64;
+
   @override
   void initState() {
     super.initState();
     _coordinator = widget.operationCoordinator ?? OperationCoordinator();
     _cleanupRunner =
         widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
-    unawaited(_initialize());
+    _initialization = _initialize();
     _shareChannel.setMethodCallHandler(_handleShareMethod);
     _statusSub = _coordinator.statusStream.listen((_) {
       if (mounted) _updateState(() {});
@@ -162,11 +167,23 @@ class _HomePageState extends State<HomePage> {
 
   bool get _isImportBusy => _importEvent != null && !_importEvent!.isTerminal;
 
+  /// 終了・キャンセル済みrequestIdを上限付きで記録する。
+  ///
+  /// 挿入順を保持するLinkedHashSetの先頭が最古エントリのため、上限超過時は
+  /// 古いものから除去して無制限成長を防ぐ。requestIdはAndroid側で毎回ユニーク
+  /// 化されるため、この防御履歴は直近の重複イベント対策としてのみ機能する。
+  void _rememberImportRequestId(Set<String> tracked, String requestId) {
+    tracked.add(requestId);
+    while (tracked.length > _maxTrackedImportRequestIds) {
+      tracked.remove(tracked.first);
+    }
+  }
+
   void _setImportEvent(ImportEvent event) {
     if (!_importRequestGate.accepts(event.requestId)) return;
     _updateState(() => _importEvent = event);
     if (event.isTerminal) {
-      _terminalImportRequestIds.add(event.requestId);
+      _rememberImportRequestId(_terminalImportRequestIds, event.requestId);
       _importRequestGate.finish(event.requestId);
     }
   }
@@ -174,7 +191,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _cancelImport() async {
     final event = _importEvent;
     if (event == null || event.isTerminal) return;
-    _cancelledImportRequestIds.add(event.requestId);
+    _rememberImportRequestId(_cancelledImportRequestIds, event.requestId);
     try {
       await _shareChannel.invokeMethod<void>('cancelSharedImport');
     } on MissingPluginException {

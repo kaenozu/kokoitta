@@ -36,6 +36,8 @@ class MainActivity : FlutterActivity() {
 
     private var channel: MethodChannel? = null
     private var activeSession: RequestSession? = null
+    private val pendingRequests = PendingShareQueue<Intent>()
+    private val requestIdGenerator = ShareRequestIdGenerator()
     private val ownership = RequestOwnership()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -61,6 +63,9 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        // pending中・進行中の共有をすべて破棄する。pendingを先に消すことで
+        // cancelActiveRequest内のpending処理起動が空振りする。
+        pendingRequests.clear()
         cancelActiveRequest()
         cleanupSession(activeSession)
         activeSession = null
@@ -73,12 +78,23 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startRequest(source: Intent, initialResult: MethodChannel.Result? = null) {
-        val requestId = computeRequestId(source)
-        if (requestId == activeSession?.requestId) {
+        if (activeSession != null) {
+            // 進行中（コピー中・Flutter処理中を問わず）のsessionがある間は、
+            // 新しい共有Intentをcancelせずpendingキューへ積み、現在のsessionが
+            // 完全に終了（deliverResultのcallback完了 or job完了）してから順次
+            // 処理する。これによりFlutter側は常に現在のrequestのイベントだけを
+            // 受信し、busy拒否や旧sessionのtempFiles削除で写真が失われない。
+            // 初期method callは即時ackする（結果はimportProgress/importResult
+            // で通知されるため、冷間起動と同じ契約）。
+            pendingRequests.enqueue(source)
             initialResult?.success(null)
             return
         }
-        cancelActiveRequest()
+        startSession(source, initialResult)
+    }
+
+    private fun startSession(source: Intent, initialResult: MethodChannel.Result? = null) {
+        val requestId = nextRequestId(source)
         val generation = ownership.start(requestId)
         if (generation == null) {
             initialResult?.success(null)
@@ -117,12 +133,38 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /// 同一URI集合の再共有でも毎回ユニークなrequestIdを発行する。
+    ///
+    /// [computeRequestId]（内容ベースのMD5）はそのまま残し、単調増加カウンタを
+    /// 付加する。Flutter側の終了・キャンセル履歴はrequestId単位で管理される
+    /// ため、ユニーク化により再共有がセッション中恒久ブロックされなくなる。
+    private fun nextRequestId(source: Intent): String =
+        requestIdGenerator.next(computeRequestId(source))
+
     private fun cancelActiveRequest() {
         val session = activeSession ?: return
         ownership.cancel(session.requestId, session.generation)
         session.job?.cancel()
         cleanupSession(session)
         if (activeSession === session) activeSession = null
+        // UIキャンセルは現在のrequestだけを止める。pending済みの共有は続行する。
+        processPendingRequests()
+    }
+
+    /// 現在のsessionが終了したときだけ呼ぶ。次のpending requestを順次開始する。
+    private fun endSession(session: RequestSession) {
+        if (activeSession !== session) return
+        activeSession = null
+        processPendingRequests()
+    }
+
+    private fun processPendingRequests() {
+        // 1件をstartSessionが開始するとactiveSessionが立つため、次のループで
+        // 停止する。startSessionが失敗（generation null）した場合は次へ進む。
+        while (activeSession == null) {
+            val next = pendingRequests.pollFirst() ?: return
+            startSession(next)
+        }
     }
 
     internal fun computeRequestId(intent: Intent): String {
@@ -239,11 +281,13 @@ class MainActivity : FlutterActivity() {
     private fun deliverResult(session: RequestSession, payload: Map<String, Any>) {
         if (!ownership.owns(session.requestId, session.generation)) {
             cleanupSession(session)
+            endSession(session)
             return
         }
         val currentChannel = channel
         if (currentChannel == null) {
             cleanupSession(session)
+            endSession(session)
             return
         }
         session.resultDelivered = true
@@ -255,21 +299,21 @@ class MainActivity : FlutterActivity() {
                     ?: emptySet()
                 cleanupSession(session, keepPaths = successPaths)
                 ownership.finish(session.requestId, session.generation)
-                if (activeSession === session) activeSession = null
+                endSession(session)
             }
 
             override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
                 Log.e(TAG, "Flutter rejected import result: $errorCode $errorMessage")
                 cleanupSession(session)
                 ownership.finish(session.requestId, session.generation)
-                if (activeSession === session) activeSession = null
+                endSession(session)
             }
 
             override fun notImplemented() {
                 Log.e(TAG, "Flutter does not implement importResult")
                 cleanupSession(session)
                 ownership.finish(session.requestId, session.generation)
-                if (activeSession === session) activeSession = null
+                endSession(session)
             }
         })
     }

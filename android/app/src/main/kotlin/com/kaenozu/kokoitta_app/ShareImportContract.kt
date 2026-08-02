@@ -63,6 +63,47 @@ internal class RequestOwnership {
         finish(requestId, generation)
 }
 
+/**
+ * Issues a unique requestId for every share request.
+ *
+ * The base id is derived from the URI contents so that the same photo set maps
+ * to the same base; appending a monotonic counter keeps re-sharing the same set
+ * distinguishable from the previous delivery. Flutter-side terminal/cancelled
+ * history is tracked per requestId, so a fresh id prevents a re-share from
+ * being permanently rejected within a session.
+ */
+internal class ShareRequestIdGenerator {
+    private var sequence = 0L
+
+    fun next(baseRequestId: String): String {
+        sequence += 1
+        return "${baseRequestId}_s$sequence"
+    }
+}
+
+/**
+ * Holds share requests that arrived while another request was still active.
+ *
+ * A new share must neither cancel nor be dropped by the in-flight request.
+ * Entries are processed strictly FIFO after the active session ends.
+ */
+internal class PendingShareQueue<T> {
+    private val entries = ArrayDeque<T>()
+
+    fun isEmpty(): Boolean = entries.isEmpty()
+
+    fun enqueue(entry: T) {
+        entries.addLast(entry)
+    }
+
+    /** Removes and returns the oldest entry, or null when empty. */
+    fun pollFirst(): T? = if (entries.isEmpty()) null else entries.removeFirst()
+
+    fun clear() {
+        entries.clear()
+    }
+}
+
 /** Copies a stream with a fixed buffer and stops before an upper bound is exceeded. */
 internal object BoundedStreamCopier {
     private const val BUFFER_SIZE = 32 * 1024

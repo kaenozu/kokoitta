@@ -28,6 +28,50 @@ class ShareImportContractTest {
     }
 
     @Test
+    fun requestIdGeneratorProducesUniqueIdsForTheSameBase() {
+        val generator = ShareRequestIdGenerator()
+        val first = generator.next("base-id")
+        val second = generator.next("base-id")
+        val third = generator.next("base-id")
+
+        assertFalse(first == second)
+        assertFalse(second == third)
+        assertTrue(first.endsWith("_s1"))
+        assertTrue(second.endsWith("_s2"))
+        assertTrue(third.endsWith("_s3"))
+    }
+
+    @Test
+    fun pendingShareQueueProcessesEntriesInFifoOrder() {
+        val queue = PendingShareQueue<String>()
+        assertTrue(queue.isEmpty())
+
+        queue.enqueue("first")
+        queue.enqueue("second")
+        queue.enqueue("third")
+
+        val order = mutableListOf<String>()
+        while (true) {
+            val next = queue.pollFirst() ?: break
+            order += next
+        }
+        assertEquals(listOf("first", "second", "third"), order)
+        assertTrue(queue.isEmpty())
+        assertTrue(queue.pollFirst() == null)
+    }
+
+    @Test
+    fun pendingShareQueueClearDropsAllEntries() {
+        val queue = PendingShareQueue<String>()
+        queue.enqueue("first")
+        queue.enqueue("second")
+        queue.clear()
+
+        assertTrue(queue.isEmpty())
+        assertTrue(queue.pollFirst() == null)
+    }
+
+    @Test
     fun boundedCopyStopsAtLimitAndWritesOnlyAllowedBytes() {
         val output = ByteArrayOutputStream()
         val outcome = BoundedStreamCopier.copy(

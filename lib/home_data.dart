@@ -61,7 +61,8 @@ extension _HomeDataActions on _HomePageState {
       _setImportEvent(
         event.copyWith(phase: ImportPhase.saving, isTerminal: false),
       );
-      _setImportEvent(await _importSharedUris(event));
+      final result = await _importSharedUris(event);
+      if (result != null) _setImportEvent(result);
     } on MissingPluginException {
       // Widget tests and unsupported platforms do not provide the Android channel.
     } on PlatformException catch (error) {
@@ -71,6 +72,10 @@ extension _HomeDataActions on _HomePageState {
 
   Future<dynamic> _handleShareMethod(MethodCall call) async {
     if (call.arguments is! Map) return null;
+    // 永続データのロード完了を待つ。ロード失敗時は空のAppDataで共有イベントを
+    // 処理して既存の保存データを上書きしないよう、イベントを無視する。
+    await _initialization;
+    if (_loadError != null) return null;
     try {
       final arguments = Map<dynamic, dynamic>.from(call.arguments as Map);
       final event = switch (call.method) {
@@ -88,7 +93,8 @@ extension _HomeDataActions on _HomePageState {
       _setImportEvent(
         event.copyWith(phase: ImportPhase.saving, isTerminal: false),
       );
-      _setImportEvent(await _importSharedUris(event));
+      final result = await _importSharedUris(event);
+      if (result != null) _setImportEvent(result);
     } on FormatException catch (error) {
       _showError('共有写真の取り込み', error);
     } on MissingPluginException {
@@ -110,7 +116,7 @@ extension _HomeDataActions on _HomePageState {
     _updateState(() => _data = next);
   }
 
-  Future<ImportEvent> _importSharedUris(ImportEvent source) async {
+  Future<ImportEvent?> _importSharedUris(ImportEvent source) async {
     var copiedCount = 0;
     var failures = <ImportFailure>[...source.failures];
     try {
@@ -147,6 +153,7 @@ extension _HomeDataActions on _HomePageState {
         }
         if (copied.photos.isEmpty) return;
 
+        final previousData = _data;
         final createsTrip = _data.trips.length < _HomePageState._maxTrips;
         AppData next;
         if (createsTrip) {
@@ -173,6 +180,15 @@ extension _HomeDataActions on _HomePageState {
           await _deleteFiles(copied.photos);
           rethrow;
         }
+        // 保存（commit）中のUIキャンセルは保存完了後にしか検出できない。
+        // ストアとメモリをpreviousDataへ巻き戻し、写真も削除する。
+        if (_cancelledImportRequestIds.contains(source.requestId)) {
+          await _store.save(previousData);
+          _updateState(() => _data = previousData);
+          await _deleteFiles(copied.photos);
+          copiedCount = 0;
+          return;
+        }
       });
     } catch (error) {
       failures.add(
@@ -182,6 +198,11 @@ extension _HomeDataActions on _HomePageState {
           reason: _readableError(error),
         ),
       );
+    }
+    // キャンセル済みrequestの完了イベント・成功SnackBarは出さない。
+    // キャンセル時のUI表示（cancelled event）は_cancelImportが担う。
+    if (_cancelledImportRequestIds.contains(source.requestId)) {
+      return null;
     }
     final phase = failures.isEmpty
         ? ImportPhase.completed
@@ -396,6 +417,7 @@ extension _HomeDataActions on _HomePageState {
           terminal: false,
           failures: copied.failures,
         );
+        final previousData = _data;
         final next = tripId == null
             ? addNewTrip(
                 _data,
@@ -412,6 +434,14 @@ extension _HomeDataActions on _HomePageState {
         } catch (_) {
           await _deleteFiles(copied.photos);
           rethrow;
+        }
+        // 保存（commit）中のUIキャンセルは保存完了後にしか検出できない。
+        // ストアとメモリをpreviousDataへ巻き戻し、写真も削除する。
+        if (_cancelledImportRequestIds.contains(requestId)) {
+          await _store.save(previousData);
+          _updateState(() => _data = previousData);
+          await _deleteFiles(copied.photos);
+          return;
         }
         final phase = copied.failures.isEmpty
             ? ImportPhase.completed
