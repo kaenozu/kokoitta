@@ -239,6 +239,8 @@ void main() {
       await tester.runAsync(() => _copiedPhotos(documentsDir)),
       hasLength(1),
     );
+    await tester.tap(find.text('旅行'));
+    await tester.pump();
     expect(find.text('共有からのおでかけ 1'), findsOneWidget);
     expect(find.textContaining('取り消しに失敗しました'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -318,6 +320,8 @@ void main() {
       await tester.runAsync(() => _copiedPhotos(documentsDir)),
       hasLength(1),
     );
+    await tester.tap(find.text('旅行'));
+    await tester.pump();
     expect(find.text('共有からのおでかけ 1'), findsNothing);
     expect(find.textContaining('取り消しに失敗しました'), findsOneWidget);
     expect(tester.takeException(), isNull);
