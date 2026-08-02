@@ -28,11 +28,22 @@ void main() => runApp(const KokoittaApp());
 /// 起動時cleanupの実行関数。キュー直列化の対象となる写真ファイル削除処理。
 typedef CleanupRunner = Future<void> Function(AppData data);
 
+/// 写真ファイル削除の実行関数。失敗件数を返す。
+///
+/// 通常は端末ファイルを削除し、テストではrollback後の部分失敗を注入する。
+typedef PhotoDeleteRunner = Future<int> Function(Iterable<Photo> photos);
+
 class KokoittaApp extends StatelessWidget {
-  const KokoittaApp({super.key, this.cleanupRunner, this.onImportEvent});
+  const KokoittaApp({
+    super.key,
+    this.cleanupRunner,
+    this.photoDeleteRunner,
+    this.onImportEvent,
+  });
 
   /// 起動時cleanupの実行関数。テストで競合を制御するために注入可能。
   final CleanupRunner? cleanupRunner;
+  final PhotoDeleteRunner? photoDeleteRunner;
   final void Function(ImportEvent event)? onImportEvent;
 
   @override
@@ -95,6 +106,7 @@ class KokoittaApp extends StatelessWidget {
       themeMode: ThemeMode.system,
       home: HomePage(
         cleanupRunner: cleanupRunner,
+        photoDeleteRunner: photoDeleteRunner,
         onImportEvent: onImportEvent,
       ),
     );
@@ -106,6 +118,7 @@ class HomePage extends StatefulWidget {
     super.key,
     this.operationCoordinator,
     this.cleanupRunner,
+    this.photoDeleteRunner,
     this.onImportEvent,
   });
 
@@ -113,6 +126,7 @@ class HomePage extends StatefulWidget {
 
   /// 起動時cleanupの実行関数。テストで競合を制御するために注入可能。
   final CleanupRunner? cleanupRunner;
+  final PhotoDeleteRunner? photoDeleteRunner;
   final void Function(ImportEvent event)? onImportEvent;
 
   @override
@@ -201,7 +215,11 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _cancelImport() async {
     final event = _importEvent;
-    if (event == null || event.isTerminal) return;
+    if (event == null ||
+        event.isTerminal ||
+        event.phase == ImportPhase.cancelled) {
+      return;
+    }
     _rememberImportRequestId(_cancelledImportRequestIds, event.requestId);
     try {
       await _shareChannel.invokeMethod<void>('cancelSharedImport');
@@ -210,6 +228,8 @@ class _HomePageState extends State<HomePage> {
     } on PlatformException {
       // The local cancellation state still prevents a later commit.
     }
+    // rollbackと生成ファイル削除が確定するまでrequest gateを閉じない。
+    // 成否は実際の取り込み処理がterminal eventとして通知する。
     _setImportEvent(
       ImportEvent(
         requestId: event.requestId,
@@ -218,7 +238,7 @@ class _HomePageState extends State<HomePage> {
         total: event.total,
         succeeded: 0,
         failed: event.failed,
-        isTerminal: true,
+        isTerminal: false,
         failures: event.failures,
       ),
     );
