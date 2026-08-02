@@ -173,6 +173,50 @@ void main() {
     );
   });
 
+  testWidgets('共有importのprogressを表示し古いrequestのeventを無視する', (tester) async {
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    Future<void> sendNativeEvent(
+      String method,
+      Map<String, Object?> args,
+    ) async {
+      final done = Completer<ByteData?>();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            channel.name,
+            const StandardMethodCodec().encodeMethodCall(
+              MethodCall(method, args),
+            ),
+            done.complete,
+          );
+      await done.future;
+      await tester.pump();
+    }
+
+    await sendNativeEvent('importProgress', <String, Object?>{
+      'requestId': 'request-b',
+      'phase': 'copying',
+      'processed': 1,
+      'total': 2,
+      'succeeded': 1,
+      'failed': 0,
+      'terminal': false,
+    });
+    expect(find.text('取り込み 1 / 2'), findsOneWidget);
+
+    await sendNativeEvent('importProgress', <String, Object?>{
+      'requestId': 'request-a',
+      'phase': 'copying',
+      'processed': 2,
+      'total': 2,
+      'succeeded': 2,
+      'failed': 0,
+      'terminal': false,
+    });
+    expect(find.text('取り込み 1 / 2'), findsOneWidget);
+  });
+
   testWidgets('地図タップで状態を保存し再起動後も維持する', (tester) async {
     const hokkaidoKey = ValueKey<String>('prefecture-map-01');
 

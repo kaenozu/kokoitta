@@ -3,43 +3,53 @@ package com.kaenozu.kokoitta_app
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
 
+private const val TAG = "KokoittaShareImport"
 private const val SHARE_CHANNEL = "com.kaenozu.kokoitta/share"
 private const val MAX_SHARED_IMAGES = 300
 private const val MAX_SHARED_BYTES = 700L * 1024L * 1024L
 private const val MAX_SINGLE_IMAGE_BYTES = 40L * 1024L * 1024L
 
 class MainActivity : FlutterActivity() {
+    private data class RequestSession(
+        val requestId: String,
+        val generation: Long,
+        val tempFiles: MutableSet<File> = linkedSetOf(),
+        var resultDelivered: Boolean = false,
+        var job: Job? = null,
+    )
+
     private var channel: MethodChannel? = null
-    private var activeProcessJob: Job? = null
-    private var activeRequestId: String? = null
+    private var activeSession: RequestSession? = null
+    private val ownership = RequestOwnership()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHARE_CHANNEL)
         channel?.setMethodCallHandler { call, result ->
-            if (call.method == "getSharedUris") {
-                handleGetSharedUris(call, result)
-            } else {
-                result.notImplemented()
+            when (call.method) {
+                "getSharedUris" -> handleGetSharedUris(result)
+                "cancelSharedImport" -> {
+                    cancelActiveRequest()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
             }
         }
     }
@@ -47,37 +57,72 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val requestId = computeRequestId(intent)
-        if (requestId == activeRequestId) return
-        activeRequestId = requestId
-        activeProcessJob?.cancel()
-        activeProcessJob = scope.launch {
-            val resultMap = processSharedFiles(intent)
-            activeRequestId = null
-            channel?.invokeMethod("sharedUris", resultMap)
-        }
+        startRequest(intent)
     }
 
     override fun onDestroy() {
-        activeProcessJob?.cancel()
+        cancelActiveRequest()
+        cleanupSession(activeSession)
+        activeSession = null
         scope.cancel()
         super.onDestroy()
     }
 
-    private fun handleGetSharedUris(call: MethodCall, result: MethodChannel.Result) {
-        val intent = intent
-        val requestId = computeRequestId(intent)
-        if (requestId == activeRequestId) {
-            result.success(emptyMap<String, Any>())
+    private fun handleGetSharedUris(result: MethodChannel.Result) {
+        startRequest(intent, result)
+    }
+
+    private fun startRequest(source: Intent, initialResult: MethodChannel.Result? = null) {
+        val requestId = computeRequestId(source)
+        if (requestId == activeSession?.requestId) {
+            initialResult?.success(null)
             return
         }
-        activeRequestId = requestId
-        activeProcessJob?.cancel()
-        activeProcessJob = scope.launch {
-            val resultMap = processSharedFiles(intent)
-            activeRequestId = null
-            result.success(resultMap)
+        cancelActiveRequest()
+        val generation = ownership.start(requestId)
+        if (generation == null) {
+            initialResult?.success(null)
+            return
         }
+        val session = RequestSession(requestId, generation)
+        activeSession = session
+        // The initial method call is acknowledged immediately. The actual
+        // result is delivered through importProgress/importResult so the same
+        // contract is used for cold-start and onNewIntent sharing.
+        initialResult?.success(null)
+        session.job = scope.launch {
+            try {
+                processSharedFiles(source, session)
+            } catch (error: Throwable) {
+                if (error !is kotlinx.coroutines.CancellationException) {
+                    Log.e(TAG, "share import failed for ${session.requestId}", error)
+                    deliverResult(
+                        session,
+                        resultMap(
+                            session,
+                            phase = "failed",
+                            processed = maxOf(extractUris(source).size, 1),
+                            total = maxOf(extractUris(source).size, 1),
+                            successes = emptyList(),
+                            failures = listOf(failure(0, "unexpected_error", error.message ?: "取り込みに失敗しました")),
+                        ),
+                    )
+                }
+            } finally {
+                if (!session.resultDelivered) cleanupSession(session)
+                if (ownership.owns(session.requestId, session.generation)) {
+                    ownership.finish(session.requestId, session.generation)
+                }
+            }
+        }
+    }
+
+    private fun cancelActiveRequest() {
+        val session = activeSession ?: return
+        ownership.cancel(session.requestId, session.generation)
+        session.job?.cancel()
+        cleanupSession(session)
+        if (activeSession === session) activeSession = null
     }
 
     internal fun computeRequestId(intent: Intent): String {
@@ -102,106 +147,131 @@ class MainActivity : FlutterActivity() {
         return uris.distinct()
     }
 
-    private suspend fun processSharedFiles(source: Intent): Map<String, Any> {
+    private suspend fun processSharedFiles(source: Intent, session: RequestSession) {
         val uris = extractUris(source)
-        val receivedCount = uris.size
-        val requestId = computeRequestId(source)
-
-        if (receivedCount > MAX_SHARED_IMAGES) {
+        if (uris.size > MAX_SHARED_IMAGES) {
             consumeIntent(source)
-            return mapOf<String, Any>(
-                "requestId" to requestId,
-                "receivedCount" to receivedCount,
-                "acceptedCount" to 0,
-                "successes" to emptyList<Map<String, Any>>(),
-                "overLimitCount" to (receivedCount - MAX_SHARED_IMAGES),
-                "failures" to emptyList<Map<String, Any>>(),
+            deliverResult(
+                session,
+                resultMap(
+                    session,
+                    phase = "failed",
+                    processed = uris.size,
+                    total = uris.size,
+                    successes = emptyList(),
+                    failures = listOf(failure(0, "count_limit_exceeded", "写真は${MAX_SHARED_IMAGES}枚まで取り込めます")),
+                ),
             )
+            return
         }
 
+        emitProgress(session, "preparing", 0, uris.size, 0, 0, false)
         val successes = mutableListOf<Map<String, Any>>()
         val failures = mutableListOf<Map<String, Any>>()
         var cumulativeBytes = 0L
-        val incompleteTempFiles = mutableListOf<File>()
 
-        try {
         for ((index, uri) in uris.withIndex()) {
-            if (!coroutineContext.isActive) break
-
-            channel?.invokeMethod("sharedProgress", mapOf(
-                "requestId" to requestId,
-                "completed" to index,
-                "total" to receivedCount,
-                "phase" to "copying",
-            ))
-
-                val copyResult = withContext(Dispatchers.IO) {
-                    copyUriToTempFile(uri, index)
-                }
-
-                when {
-                    copyResult.errorCode != null -> {
-                        failures.add(mapOf<String, Any>(
-                            "index" to index,
-                            "errorCode" to (copyResult.errorCode ?: "unknown"),
-                            "reason" to (copyResult.reason ?: ""),
-                        ))
-                    }
-                    copyResult.file != null -> {
-                        val fileSize = copyResult.file.length()
-
-                        if (fileSize > MAX_SINGLE_IMAGE_BYTES) {
-                            copyResult.file.delete()
-                            failures.add(mapOf<String, Any>(
-                                "index" to index,
-                                "errorCode" to "single_size_exceeded",
-                                "reason" to "1枚あたりの上限（40MB）を超えています",
-                            ))
-                            continue
-                        }
-
-                        if (cumulativeBytes + fileSize > MAX_SHARED_BYTES) {
-                            copyResult.file.delete()
-                            failures.add(mapOf<String, Any>(
-                                "index" to index,
-                                "errorCode" to "total_size_exceeded",
-                                "reason" to "合計容量の上限（700MB）を超えています",
-                            ))
-                            continue
-                        }
-
-                        cumulativeBytes += fileSize
-                        successes.add(mapOf<String, Any>(
-                            "path" to copyResult.file.absolutePath,
-                            "name" to (copyResult.displayName ?: "image_${index + 1}"),
-                            "mimeType" to (copyResult.mimeType ?: "application/octet-stream"),
-                            "size" to fileSize,
-                        ))
-                    }
-                }
-            channel?.invokeMethod("sharedProgress", mapOf(
-                "requestId" to requestId,
-                "completed" to index + 1,
-                "total" to receivedCount,
-                "phase" to "copying",
-            ))
+            ensureOwner(session)
+            emitProgress(session, "copying", index, uris.size, successes.size, failures.size, false)
+            val copyResult = withContext(Dispatchers.IO) {
+                copyUriToTempFile(uri, index, session, MAX_SHARED_BYTES - cumulativeBytes)
             }
-        } finally {
-            for (file in incompleteTempFiles) {
-                try { file.delete() } catch (_: Exception) {}
+            if (copyResult.errorCode != null) {
+                failures += failure(index, copyResult.errorCode, copyResult.reason ?: "コピーに失敗しました")
+            } else if (copyResult.file != null) {
+                val fileSize = copyResult.file.length()
+                cumulativeBytes += fileSize
+                successes += mapOf(
+                    "path" to copyResult.file.absolutePath,
+                    "name" to (copyResult.displayName ?: "image_${index + 1}"),
+                    "mimeType" to (copyResult.mimeType ?: "application/octet-stream"),
+                    "size" to fileSize,
+                )
             }
+            emitProgress(session, "copying", index + 1, uris.size, successes.size, failures.size, false)
         }
 
         consumeIntent(source)
-
-        return mapOf<String, Any>(
-            "requestId" to requestId,
-            "receivedCount" to receivedCount,
-            "acceptedCount" to successes.size,
-            "successes" to successes,
-            "overLimitCount" to 0,
-            "failures" to failures,
+        val phase = when {
+            failures.isEmpty() -> "completed"
+            successes.isEmpty() -> "failed"
+            else -> "partialFailure"
+        }
+        deliverResult(
+            session,
+            resultMap(session, phase, uris.size, uris.size, successes, failures),
         )
+    }
+
+    private fun ensureOwner(session: RequestSession) {
+        if (!coroutineContextIsActive() || !ownership.owns(session.requestId, session.generation)) {
+            throw kotlinx.coroutines.CancellationException("share request is no longer active")
+        }
+    }
+
+    private fun coroutineContextIsActive(): Boolean =
+        activeSession?.let { it.job?.isActive == true } == true && !isFinishing
+
+    private fun emitProgress(
+        session: RequestSession,
+        phase: String,
+        processed: Int,
+        total: Int,
+        succeeded: Int,
+        failed: Int,
+        terminal: Boolean,
+    ) {
+        if (!ownership.owns(session.requestId, session.generation)) return
+        channel?.invokeMethod(
+            "importProgress",
+            mapOf(
+                "requestId" to session.requestId,
+                "phase" to phase,
+                "processed" to processed,
+                "total" to total,
+                "succeeded" to succeeded,
+                "failed" to failed,
+                "terminal" to terminal,
+            ),
+        )
+    }
+
+    private fun deliverResult(session: RequestSession, payload: Map<String, Any>) {
+        if (!ownership.owns(session.requestId, session.generation)) {
+            cleanupSession(session)
+            return
+        }
+        val currentChannel = channel
+        if (currentChannel == null) {
+            cleanupSession(session)
+            return
+        }
+        session.resultDelivered = true
+        currentChannel.invokeMethod("importResult", payload, object : MethodChannel.Result {
+            override fun success(result: Any?) {
+                val successPaths = (payload["successes"] as? List<*>)
+                    ?.mapNotNull { (it as? Map<*, *>)?.get("path") as? String }
+                    ?.toSet()
+                    ?: emptySet()
+                cleanupSession(session, keepPaths = successPaths)
+                ownership.finish(session.requestId, session.generation)
+                if (activeSession === session) activeSession = null
+            }
+
+            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                Log.e(TAG, "Flutter rejected import result: $errorCode $errorMessage")
+                cleanupSession(session)
+                ownership.finish(session.requestId, session.generation)
+                if (activeSession === session) activeSession = null
+            }
+
+            override fun notImplemented() {
+                Log.e(TAG, "Flutter does not implement importResult")
+                cleanupSession(session)
+                ownership.finish(session.requestId, session.generation)
+                if (activeSession === session) activeSession = null
+            }
+        })
     }
 
     private data class UriCopyResult(
@@ -212,69 +282,126 @@ class MainActivity : FlutterActivity() {
         val reason: String? = null,
     )
 
-    private fun copyUriToTempFile(uri: Uri, index: Int): UriCopyResult {
+    private fun copyUriToTempFile(
+        uri: Uri,
+        index: Int,
+        session: RequestSession,
+        remainingRequestBytes: Long,
+    ): UriCopyResult {
         val resolver = contentResolver ?: return UriCopyResult(
             errorCode = "cannot_open", reason = "ContentResolverを取得できませんでした",
         )
-
         val mimeType = resolver.getType(uri)
         val displayName = resolveDisplayName(resolver, uri)
         val extension = resolveExtension(mimeType, displayName)
-
-        if (extension == null) {
-            return UriCopyResult(
+            ?: return UriCopyResult(
                 errorCode = "unsupported_format",
                 reason = "未対応の形式です: ${mimeType ?: "不明"}",
             )
+        if (remainingRequestBytes <= 0) {
+            return UriCopyResult(errorCode = "total_size_exceeded", reason = "合計容量の上限（700MB）を超えています")
         }
 
         val tempFile = try {
-            File.createTempFile("share_${index}_", ".$extension", cacheDir)
-        } catch (e: IOException) {
-            return UriCopyResult(
-                errorCode = "copy_failed", reason = "一時ファイル作成失敗: ${e.message}",
-            )
+            File.createTempFile("share_${session.requestId}_$index-", ".$extension", cacheDir)
+                .also { session.tempFiles += it }
+        } catch (error: IOException) {
+            return UriCopyResult(errorCode = "copy_failed", reason = "一時ファイル作成失敗: ${error.message}")
         }
 
         return try {
             val inputStream = resolver.openInputStream(uri)
-            if (inputStream == null) {
-                tempFile.delete()
-                return UriCopyResult(
-                    errorCode = "cannot_open", reason = "URIを開けませんでした",
-                )
-            }
-            inputStream.use { input ->
+                ?: return failedTemp(tempFile, "cannot_open", "URIを開けませんでした")
+            val outcome = inputStream.use { input ->
                 FileOutputStream(tempFile).use { output ->
-                    input.copyTo(output)
+                    BoundedStreamCopier.copy(
+                        input,
+                        output,
+                        minOf(MAX_SINGLE_IMAGE_BYTES, remainingRequestBytes),
+                        isCancelled = {
+                            !coroutineContextIsActive() ||
+                                !ownership.owns(session.requestId, session.generation)
+                        },
+                    )
                 }
             }
-            UriCopyResult(file = tempFile, displayName = displayName, mimeType = mimeType)
-        } catch (e: SecurityException) {
-            tempFile.delete()
-            UriCopyResult(errorCode = "cannot_open", reason = "ストレージアクセスが拒否されました")
-        } catch (e: IOException) {
-            tempFile.delete()
-            UriCopyResult(errorCode = "copy_failed", reason = "コピー失敗: ${e.message}")
-        } catch (e: OutOfMemoryError) {
-            tempFile.delete()
-            UriCopyResult(errorCode = "copy_failed", reason = "ファイルサイズが大きすぎて処理できません")
+            when (outcome.stopped) {
+                StopReason.CANCELLED -> failedTemp(tempFile, "cancelled", "取り込みがキャンセルされました")
+                StopReason.LIMIT_EXCEEDED -> {
+                    val code = if (outcome.bytesCopied >= MAX_SINGLE_IMAGE_BYTES) {
+                        "single_size_exceeded"
+                    } else {
+                        "total_size_exceeded"
+                    }
+                    failedTemp(tempFile, code, "サイズ上限を超えたため取り込みを中断しました")
+                }
+                StopReason.COMPLETED -> UriCopyResult(
+                    file = tempFile,
+                    displayName = displayName,
+                    mimeType = mimeType,
+                )
+            }
+        } catch (error: SecurityException) {
+            failedTemp(tempFile, "cannot_open", "ストレージアクセスが拒否されました")
+        } catch (error: IOException) {
+            failedTemp(tempFile, "copy_failed", "コピー失敗: ${error.message}")
+        } catch (error: OutOfMemoryError) {
+            failedTemp(tempFile, "copy_failed", "ファイルサイズが大きすぎて処理できません")
         }
     }
 
-    private fun resolveDisplayName(resolver: android.content.ContentResolver, uri: Uri): String? {
-        return try {
-            val cursor = resolver.query(uri, null, null, null, null)
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (nameIndex >= 0) it.getString(nameIndex) else null
-                } else null
+    private fun failedTemp(file: File, code: String, reason: String): UriCopyResult {
+        deleteTrackedFile(file)
+        return UriCopyResult(errorCode = code, reason = reason)
+    }
+
+    private fun cleanupSession(session: RequestSession?, keepPaths: Set<String> = emptySet()) {
+        session ?: return
+        val files = session.tempFiles.toList()
+        for (file in files) {
+            if (file.absolutePath in keepPaths) {
+                session.tempFiles.remove(file)
+            } else {
+                deleteTrackedFile(file)
             }
-        } catch (_: Exception) {
-            null
         }
     }
+
+    private fun deleteTrackedFile(file: File) {
+        activeSession?.tempFiles?.remove(file)
+        try {
+            if (file.exists() && !file.delete()) {
+                Log.e(TAG, "temporary import cleanup failed: ${file.absolutePath}")
+            }
+        } catch (error: SecurityException) {
+            Log.e(TAG, "temporary import cleanup failed: ${file.absolutePath}", error)
+        }
+    }
+
+    private fun resultMap(
+        session: RequestSession,
+        phase: String,
+        processed: Int,
+        total: Int,
+        successes: List<Map<String, Any>>,
+        failures: List<Map<String, Any>>,
+    ): Map<String, Any> = mapOf(
+        "requestId" to session.requestId,
+        "phase" to phase,
+        "processed" to processed,
+        "total" to total,
+        "succeeded" to successes.size,
+        "failed" to failures.size,
+        "terminal" to true,
+        "successes" to successes,
+        "failures" to failures,
+    )
+
+    private fun failure(index: Int, errorCode: String, reason: String): Map<String, Any> = mapOf(
+        "index" to index,
+        "errorCode" to errorCode,
+        "reason" to reason,
+    )
 
     internal fun resolveExtension(mimeType: String?, displayName: String?): String? {
         val mimeToExt = mapOf(
@@ -291,25 +418,31 @@ class MainActivity : FlutterActivity() {
             "image/tiff" to "tiff",
             "image/x-icon" to "ico",
         )
-
         val knownImageExtensions = setOf(
             "jpg", "jpeg", "png", "heic", "heif", "webp", "gif",
             "bmp", "wbmp", "svg", "tiff", "tif", "ico",
         )
-
         val fromMime = mimeType?.lowercase()?.let { mimeToExt[it] }
         if (fromMime != null) return fromMime
-
-        if (mimeType != null && mimeType.startsWith("image/")) {
-            if (displayName != null) {
-                val dotIndex = displayName.lastIndexOf('.')
-                if (dotIndex >= 0 && dotIndex < displayName.length - 1) {
-                    val ext = displayName.substring(dotIndex + 1).lowercase()
-                    if (ext in knownImageExtensions) return ext
-                }
+        if (mimeType != null && mimeType.startsWith("image/") && displayName != null) {
+            val dotIndex = displayName.lastIndexOf('.')
+            if (dotIndex >= 0 && dotIndex < displayName.length - 1) {
+                val ext = displayName.substring(dotIndex + 1).lowercase()
+                if (ext in knownImageExtensions) return ext
             }
         }
-
         return null
+    }
+
+    private fun resolveDisplayName(resolver: android.content.ContentResolver, uri: Uri): String? = try {
+        resolver.query(uri, null, null, null, null)?.use {
+            if (it.moveToFirst()) {
+                val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0) it.getString(nameIndex) else null
+            } else null
+        }
+    } catch (error: Exception) {
+        Log.w(TAG, "could not read display name", error)
+        null
     }
 }

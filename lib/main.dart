@@ -14,6 +14,7 @@ import 'models.dart';
 import 'offline_japan_map.dart';
 import 'operation_coordinator.dart';
 import 'photo.dart';
+import 'import_progress.dart';
 import 'storage_cleanup.dart';
 import 'trip_store.dart';
 import 'validators.dart';
@@ -123,12 +124,13 @@ class _HomePageState extends State<HomePage> {
   late final OperationCoordinator _coordinator;
   late final CleanupRunner _cleanupRunner;
   AppData _data = AppData.empty();
-  late final Future<void> _initialization;
   bool _isLoading = true;
   String? _loadError;
   int _tab = 0;
-  int? _importCompleted;
-  int? _importTotal;
+  final ImportRequestGate _importRequestGate = ImportRequestGate();
+  final Set<String> _cancelledImportRequestIds = <String>{};
+  final Set<String> _terminalImportRequestIds = <String>{};
+  ImportEvent? _importEvent;
   bool _isCleanupRunning = false;
   StreamSubscription<OperationStatus>? _statusSub;
 
@@ -138,7 +140,7 @@ class _HomePageState extends State<HomePage> {
     _coordinator = widget.operationCoordinator ?? OperationCoordinator();
     _cleanupRunner =
         widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
-    _initialization = _initialize();
+    unawaited(_initialize());
     _shareChannel.setMethodCallHandler(_handleShareMethod);
     _statusSub = _coordinator.statusStream.listen((_) {
       if (mounted) _updateState(() {});
@@ -156,6 +158,33 @@ class _HomePageState extends State<HomePage> {
   void _updateState(VoidCallback update) {
     if (!mounted) return;
     setState(update);
+  }
+
+  bool get _isImportBusy => _importEvent != null && !_importEvent!.isTerminal;
+
+  void _setImportEvent(ImportEvent event) {
+    if (!_importRequestGate.accepts(event.requestId)) return;
+    _updateState(() => _importEvent = event);
+    if (event.isTerminal) {
+      _terminalImportRequestIds.add(event.requestId);
+      _importRequestGate.finish(event.requestId);
+    }
+  }
+
+  Future<void> _cancelImport() async {
+    final event = _importEvent;
+    if (event == null || event.isTerminal) return;
+    _cancelledImportRequestIds.add(event.requestId);
+    try {
+      await _shareChannel.invokeMethod<void>('cancelSharedImport');
+    } on MissingPluginException {
+      // The normal picker has no native session to cancel.
+    } on PlatformException {
+      // The local cancellation state still prevents a later commit.
+    }
+    _setImportEvent(
+      event.copyWith(phase: ImportPhase.cancelled, isTerminal: true),
+    );
   }
 
   @override

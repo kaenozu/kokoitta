@@ -10,7 +10,7 @@ extension _HomeView on _HomePageState {
   bool get _photoQuotaReached => _photoCount >= _photoQuota;
 
   bool get _isDisabled =>
-      _isLoading || _coordinator.isBusy || _photoQuotaReached;
+      _isLoading || _coordinator.isBusy || _isImportBusy || _photoQuotaReached;
 
   Widget _buildPage(BuildContext context) {
     return Scaffold(
@@ -26,10 +26,18 @@ extension _HomeView on _HomePageState {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
-          if (_importCompleted != null && _importTotal != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text('取り込み $_importCompleted / $_importTotal'),
+          if (_importEvent != null && !_importEvent!.isTerminal)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  '取り込み ${_importEvent!.processed} / ${_importEvent!.total}',
+                ),
+                TextButton(
+                  onPressed: _cancelImport,
+                  child: const Text('キャンセル'),
+                ),
+              ],
             ),
           IconButton(
             onPressed: _isDisabled || _loadError != null || _photoQuotaReached
