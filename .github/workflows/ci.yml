@@ -41,6 +41,9 @@ jobs:
       - name: Test
         run: flutter test
 
+      - name: Test Android share pipeline
+        run: ./android/gradlew -p android :app:testDebugUnitTest --no-daemon
+
       - name: Validate release shell syntax
         run: |
           bash -n scripts/validate-release.sh

@@ -1,7 +1,28 @@
 package com.kaenozu.kokoitta_app
 
+import android.content.Intent
+import android.net.Uri
 import java.io.InputStream
 import java.io.OutputStream
+import java.security.MessageDigest
+
+/** Pure share-intent contract used by MainActivity and JVM tests. */
+internal object ShareIntentContract {
+    fun computeRequestId(intent: Intent): String {
+        val singleUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        val multiUris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+        val allUris = (listOfNotNull(singleUri) + (multiUris ?: emptyList())).distinct().sorted()
+        if (allUris.isEmpty()) return "empty_${intent.action}"
+        val joined = allUris.joinToString("|") { it.toString().lowercase() }
+        val digest = MessageDigest.getInstance("MD5").digest(joined.toByteArray())
+        return digest.joinToString("") { "%02x".format(it) } + "_${intent.action}"
+    }
+
+    fun consumeIntent(intent: Intent) {
+        intent.removeExtra(Intent.EXTRA_STREAM)
+        intent.action = null
+    }
+}
 
 internal enum class ImportPhase {
     PREPARING,

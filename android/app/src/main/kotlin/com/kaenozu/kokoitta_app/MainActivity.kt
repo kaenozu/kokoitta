@@ -17,7 +17,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.security.MessageDigest
 
 private const val TAG = "KokoittaShareImport"
 private const val SHARE_CHANNEL = "com.kaenozu.kokoitta/share"
@@ -168,18 +167,11 @@ class MainActivity : FlutterActivity() {
     }
 
     internal fun computeRequestId(intent: Intent): String {
-        val singleUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-        val multiUris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
-        val allUris = (listOfNotNull(singleUri) + (multiUris ?: emptyList())).distinct().sorted()
-        if (allUris.isEmpty()) return "empty_${intent.action}"
-        val joined = allUris.joinToString("|") { it.toString().lowercase() }
-        val digest = MessageDigest.getInstance("MD5").digest(joined.toByteArray())
-        return digest.joinToString("") { "%02x".format(it) } + "_${intent.action}"
+        return ShareIntentContract.computeRequestId(intent)
     }
 
     internal fun consumeIntent(source: Intent) {
-        source.removeExtra(Intent.EXTRA_STREAM)
-        source.action = null
+        ShareIntentContract.consumeIntent(source)
     }
 
     internal fun extractUris(source: Intent): List<Uri> {
