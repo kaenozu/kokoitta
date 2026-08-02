@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/app_data_operations.dart';
+import 'package:kokoitta_app/import_progress.dart';
 import 'package:kokoitta_app/models.dart';
 import 'package:kokoitta_app/photo.dart';
 
@@ -40,12 +41,16 @@ void main() {
     expect(updated.trips.single.photos, <Photo>[existing, added]);
   });
 
-  test('構造化結果のsuccessesパスをaddNewTripで旅行に取り込める', () {
-    final result = <String, dynamic>{
+  test('共有結果parserのsuccessesをaddNewTripで旅行に取り込める', () {
+    final result = ImportEventParser.parseResult(<String, Object?>{
       'requestId': 'test_req',
-      'receivedCount': 2,
-      'acceptedCount': 2,
-      'successes': <Map<String, dynamic>>[
+      'phase': 'completed',
+      'processed': 2,
+      'total': 2,
+      'succeeded': 2,
+      'failed': 0,
+      'terminal': true,
+      'successes': <Object?>[
         {
           'path': '/tmp/import_0.jpg',
           'name': 'photo1.jpg',
@@ -59,15 +64,10 @@ void main() {
           'size': 2048,
         },
       ],
-      'overLimitCount': 0,
-      'failures': <Map<String, dynamic>>[],
-    };
+      'failures': const <Object?>[],
+    });
 
-    final successes = (result['successes'] as List<dynamic>);
-    final paths = successes
-        .map((e) => (e as Map<dynamic, dynamic>)['path'] as String)
-        .toList();
-    final photos = paths.map((p) => photoOf(p)).toList();
+    final photos = result.successes.map((file) => photoOf(file.path)).toList();
 
     final data = AppData(
       trips: <Trip>[],
@@ -85,27 +85,40 @@ void main() {
     expect(updated.trips.single.photos[1].file.path, endsWith('import_1.png'));
   });
 
-  test('構造化結果のoverLimitCount>0の場合、successesは空でacceptedCountは0', () {
-    final result = <String, dynamic>{
+  test('共有結果parserのサイズ上限エラーはsuccessesを空にする', () {
+    final result = ImportEventParser.parseResult(<String, Object?>{
       'requestId': 'overlimit_req',
-      'receivedCount': 350,
-      'acceptedCount': 0,
-      'successes': <Map<String, dynamic>>[],
-      'overLimitCount': 50,
-      'failures': <Map<String, dynamic>>[],
-    };
+      'phase': 'failed',
+      'processed': 1,
+      'total': 1,
+      'succeeded': 0,
+      'failed': 1,
+      'terminal': true,
+      'successes': const <Object?>[],
+      'failures': <Object?>[
+        <String, Object?>{
+          'index': 0,
+          'errorCode': 'total_size_exceeded',
+          'reason': '合計容量の上限を超えています',
+        },
+      ],
+    });
 
-    expect(result['acceptedCount'], 0);
-    expect(result['overLimitCount'], greaterThan(0));
-    expect((result['successes'] as List<dynamic>), isEmpty);
+    expect(result.succeeded, 0);
+    expect(result.failures.single.errorCode, 'total_size_exceeded');
+    expect(result.successes, isEmpty);
   });
 
-  test('構造化結果のfailuresにエラーコードと理由が含まれる', () {
-    final result = <String, dynamic>{
+  test('共有結果parserの部分成功は成功とAndroidエラーを保持する', () {
+    final result = ImportEventParser.parseResult(<String, Object?>{
       'requestId': 'failure_req',
-      'receivedCount': 2,
-      'acceptedCount': 1,
-      'successes': <Map<String, dynamic>>[
+      'phase': 'partialFailure',
+      'processed': 2,
+      'total': 2,
+      'succeeded': 1,
+      'failed': 1,
+      'terminal': true,
+      'successes': <Object?>[
         {
           'path': '/tmp/success.jpg',
           'name': 'good.jpg',
@@ -113,16 +126,13 @@ void main() {
           'size': 512,
         },
       ],
-      'overLimitCount': 0,
-      'failures': <Map<String, dynamic>>[
+      'failures': <Object?>[
         {'index': 0, 'errorCode': 'cannot_open', 'reason': 'URIを開けませんでした'},
       ],
-    };
+    });
 
-    final failures = (result['failures'] as List<dynamic>);
-    expect(failures, hasLength(1));
-    final failure = failures[0] as Map<dynamic, dynamic>;
-    expect(failure['errorCode'], 'cannot_open');
-    expect(failure['reason'], isNotEmpty);
+    expect(result.successes, hasLength(1));
+    expect(result.failures.single.errorCode, 'cannot_open');
+    expect(result.failures.single.reason, isNotEmpty);
   });
 }

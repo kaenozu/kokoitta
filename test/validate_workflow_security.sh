@@ -5,6 +5,7 @@
 set -euo pipefail
 
 RELEASE_YML=".github/workflows/release.yml"
+CI_YML=".github/workflows/ci.yml"
 PASS=0
 FAIL=0
 
@@ -156,6 +157,19 @@ if [[ $unpinned_actions -eq 0 ]]; then
   pass "all release workflow actions are pinned to full commit SHAs"
 else
   fail "$unpinned_actions action reference(s) are not fully pinned"
+fi
+
+ci_unpinned_actions=0
+while IFS= read -r line; do
+  if [[ ! "$line" =~ @[0-9a-f]{40}([[:space:]]|$) ]]; then
+    echo "     unpinned CI action: $line"
+    ci_unpinned_actions=$((ci_unpinned_actions + 1))
+  fi
+done < <(grep -E '^[[:space:]]+uses:' "$CI_YML")
+if [[ $ci_unpinned_actions -eq 0 ]]; then
+  pass "all CI workflow actions are pinned to full commit SHAs"
+else
+  fail "$ci_unpinned_actions CI action reference(s) are not fully pinned"
 fi
 
 assert_contains "$RELEASE_YML" "concurrency:" \
