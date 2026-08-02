@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/import_progress.dart';
@@ -168,22 +169,24 @@ void main() {
   testWidgets('commit後キャンセルの保存復元失敗をterminal failureとして通知する', (
     tester,
   ) async {
-    final sourceDir = await Directory.systemTemp.createTemp(
-      'kokoitta-cancel-source',
-    );
-    final documentsDir = await Directory.systemTemp.createTemp(
-      'kokoitta-cancel-docs',
-    );
+    final sourceDir = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('kokoitta-cancel-source'),
+    ))!;
+    final documentsDir = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('kokoitta-cancel-docs'),
+    ))!;
     addTearDown(() async {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
-      if (await sourceDir.exists()) await sourceDir.delete(recursive: true);
-      if (await documentsDir.exists()) {
-        await documentsDir.delete(recursive: true);
-      }
+      await tester.runAsync(() async {
+        if (await sourceDir.exists()) await sourceDir.delete(recursive: true);
+        if (await documentsDir.exists()) {
+          await documentsDir.delete(recursive: true);
+        }
+      });
     });
     final source = File('${sourceDir.path}/shared.jpg');
-    await source.writeAsBytes(_pngBytes);
+    await tester.runAsync(() => source.writeAsBytes(_pngBytes));
     _mockPathProvider(documentsDir);
 
     final store = _ControlledPrefsStore(failRollbackSave: true);
@@ -215,19 +218,21 @@ void main() {
       store.release!.complete();
     });
 
-    final terminal = await tester.runAsync(
+    final terminal = (await tester.runAsync(
       () => _waitForTerminal(events, timeout: const Duration(seconds: 10)),
-    );
+    ))!;
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(terminal, isNotNull);
-    expect(terminal!.phase, ImportPhase.failed);
+    expect(terminal.phase, ImportPhase.failed);
     expect(terminal.failures.single.errorCode, 'rollback_restore_failed');
     final preferences = await SharedPreferences.getInstance();
     final raw = preferences.getString(TripStore.dataKey);
     expect(raw, isNotNull);
     expect(_tripCount(raw!), 1);
-    expect(await tester.runAsync(() => _copiedPhotos(documentsDir)), hasLength(1));
+    expect(
+      await tester.runAsync(() => _copiedPhotos(documentsDir)),
+      hasLength(1),
+    );
     expect(find.text('共有からのおでかけ 1'), findsOneWidget);
     expect(find.textContaining('取り消しに失敗しました'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -236,22 +241,24 @@ void main() {
   testWidgets('commit後キャンセルの写真削除失敗をterminal failureとして通知する', (
     tester,
   ) async {
-    final sourceDir = await Directory.systemTemp.createTemp(
-      'kokoitta-cancel-source',
-    );
-    final documentsDir = await Directory.systemTemp.createTemp(
-      'kokoitta-cancel-docs',
-    );
+    final sourceDir = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('kokoitta-cancel-source'),
+    ))!;
+    final documentsDir = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('kokoitta-cancel-docs'),
+    ))!;
     addTearDown(() async {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
-      if (await sourceDir.exists()) await sourceDir.delete(recursive: true);
-      if (await documentsDir.exists()) {
-        await documentsDir.delete(recursive: true);
-      }
+      await tester.runAsync(() async {
+        if (await sourceDir.exists()) await sourceDir.delete(recursive: true);
+        if (await documentsDir.exists()) {
+          await documentsDir.delete(recursive: true);
+        }
+      });
     });
     final source = File('${sourceDir.path}/shared.jpg');
-    await source.writeAsBytes(_pngBytes);
+    await tester.runAsync(() => source.writeAsBytes(_pngBytes));
     _mockPathProvider(documentsDir);
 
     final store = _ControlledPrefsStore();
@@ -288,13 +295,12 @@ void main() {
       store.release!.complete();
     });
 
-    final terminal = await tester.runAsync(
+    final terminal = (await tester.runAsync(
       () => _waitForTerminal(events, timeout: const Duration(seconds: 10)),
-    );
+    ))!;
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(terminal, isNotNull);
-    expect(terminal!.phase, ImportPhase.failed);
+    expect(terminal.phase, ImportPhase.failed);
     expect(terminal.failures.single.errorCode, 'rollback_cleanup_failed');
     expect(deleteRequests, hasLength(1));
     expect(deleteRequests.single, hasLength(1));
@@ -302,7 +308,10 @@ void main() {
     final raw = preferences.getString(TripStore.dataKey);
     expect(raw, isNotNull);
     expect(_tripCount(raw!), 0);
-    expect(await tester.runAsync(() => _copiedPhotos(documentsDir)), hasLength(1));
+    expect(
+      await tester.runAsync(() => _copiedPhotos(documentsDir)),
+      hasLength(1),
+    );
     expect(find.text('共有からのおでかけ 1'), findsNothing);
     expect(find.textContaining('取り消しに失敗しました'), findsOneWidget);
     expect(tester.takeException(), isNull);
