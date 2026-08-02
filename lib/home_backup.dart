@@ -184,6 +184,9 @@ extension _HomeBackupActions on _HomePageState {
   }
 
   Future<int> _deleteFiles(Iterable<Photo> photos) async {
+    final injected = widget.photoDeleteRunner;
+    if (injected != null) return injected(photos);
+
     var failures = 0;
     for (final photo in photos) {
       final file = photo.file;
