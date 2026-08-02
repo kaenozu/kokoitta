@@ -29,10 +29,11 @@ void main() => runApp(const KokoittaApp());
 typedef CleanupRunner = Future<void> Function(AppData data);
 
 class KokoittaApp extends StatelessWidget {
-  const KokoittaApp({super.key, this.cleanupRunner});
+  const KokoittaApp({super.key, this.cleanupRunner, this.onImportEvent});
 
   /// 起動時cleanupの実行関数。テストで競合を制御するために注入可能。
   final CleanupRunner? cleanupRunner;
+  final void Function(ImportEvent event)? onImportEvent;
 
   @override
   Widget build(BuildContext context) {
@@ -92,18 +93,27 @@ class KokoittaApp extends StatelessWidget {
         useMaterial3: true,
       ),
       themeMode: ThemeMode.system,
-      home: HomePage(cleanupRunner: cleanupRunner),
+      home: HomePage(
+        cleanupRunner: cleanupRunner,
+        onImportEvent: onImportEvent,
+      ),
     );
   }
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, this.operationCoordinator, this.cleanupRunner});
+  const HomePage({
+    super.key,
+    this.operationCoordinator,
+    this.cleanupRunner,
+    this.onImportEvent,
+  });
 
   final OperationCoordinator? operationCoordinator;
 
   /// 起動時cleanupの実行関数。テストで競合を制御するために注入可能。
   final CleanupRunner? cleanupRunner;
+  final void Function(ImportEvent event)? onImportEvent;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -181,6 +191,7 @@ class _HomePageState extends State<HomePage> {
 
   void _setImportEvent(ImportEvent event) {
     if (!_importRequestGate.accepts(event.requestId)) return;
+    widget.onImportEvent?.call(event);
     _updateState(() => _importEvent = event);
     if (event.isTerminal) {
       _rememberImportRequestId(_terminalImportRequestIds, event.requestId);
