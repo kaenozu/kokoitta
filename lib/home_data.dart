@@ -9,6 +9,9 @@ class _CopiedImportResult {
 
   final List<Photo> photos;
   final List<ImportFailure> failures;
+  /// Shared inputs corresponding to [photos], in the same order.
+  ///
+  /// Picker imports do not use this mapping and leave it empty.
   final List<ImportedFile> successfulFiles;
 }
 
@@ -156,6 +159,7 @@ extension _HomeDataActions on _HomePageState {
         if (_cancelledImportRequestIds.contains(source.requestId)) {
           await _deleteFiles(copied.photos);
           copiedCount = 0;
+          successfulFiles = const <ImportedFile>[];
           return;
         }
         if (copied.photos.isEmpty) return;
@@ -185,6 +189,8 @@ extension _HomeDataActions on _HomePageState {
           await _commitData(next);
         } catch (_) {
           await _deleteFiles(copied.photos);
+          copiedCount = 0;
+          successfulFiles = const <ImportedFile>[];
           rethrow;
         }
         // 保存（commit）中のUIキャンセルは保存完了後にしか検出できない。
@@ -194,6 +200,7 @@ extension _HomeDataActions on _HomePageState {
           _updateState(() => _data = previousData);
           await _deleteFiles(copied.photos);
           copiedCount = 0;
+          successfulFiles = const <ImportedFile>[];
           return;
         }
       });
