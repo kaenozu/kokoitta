@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -155,8 +156,7 @@ class _HomePageState extends State<HomePage> {
 
   late final OperationCoordinator _coordinator;
   late final CleanupRunner _cleanupRunner;
-  late final PendingDeletionManager _pendingDeletion;
-  late final Future<void> _pendingDeletionReady;
+  PendingDeletionManager? _pendingDeletion;
   late final Future<void> _initialization;
   AppData _data = AppData.empty();
   bool _isLoading = true;
@@ -181,7 +181,7 @@ class _HomePageState extends State<HomePage> {
     _coordinator = widget.operationCoordinator ?? OperationCoordinator();
     _cleanupRunner =
         widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
-    _pendingDeletionReady = _initializePendingDeletion();
+    unawaited(_initializePendingDeletion());
     _initialization = _initialize();
     _shareChannel.setMethodCallHandler(_handleShareMethod);
     _statusSub = _coordinator.statusStream.listen((_) {
@@ -190,6 +190,14 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _initializePendingDeletion() async {
+    await _buildPendingDeletion();
+  }
+
+  /// pending削除マネージャを構築・回復し、成功時のみ [true] を返す。
+  ///
+  /// 初期化失敗時に再試行できるよう、[deleteTripAndPhotos] のような利用側が
+  /// その都度呼び出せる形にしている。
+  Future<bool> _buildPendingDeletion() async {
     try {
       final injected = widget.pendingDeletionBuilder;
       if (injected != null) {
@@ -201,18 +209,23 @@ class _HomePageState extends State<HomePage> {
           trashRoot: '${documents.path}/pending-deletions',
         );
       }
-      await _pendingDeletion.recover();
-      final pending = await _pendingDeletion.loadOperations();
+      await _pendingDeletion!.recover();
+      final pending = await _pendingDeletion!.loadOperations();
       for (final operation in pending) {
         _schedulePendingExpiry(operation);
       }
       _pendingDeletionAvailable = true;
-    } catch (_) {
-      // Loading the main AppData remains authoritative. A pending-deletion
-      // recovery failure must not create an uncaught background exception or
-      // block unrelated import/startup flows; deletion is disabled until the
-      // next retry/restart.
+    } catch (error, stackTrace) {
+      _pendingDeletion = null;
+      _pendingDeletionAvailable = false;
+      developer.log(
+        'pending deletion initialization/recovery failed',
+        name: 'kokoitta',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
+    return _pendingDeletionAvailable;
   }
 
   @override
