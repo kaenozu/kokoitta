@@ -719,7 +719,7 @@ extension _HomeDataActions on _HomePageState {
     final confirmed = await _confirm(
       title: '写真も削除',
       message:
-          '「${trip.title}」と写真${trip.photos.length}枚を端末から削除します。この操作は元に戻せません。',
+          '「${trip.title}」と写真${trip.photos.length}枚を一時退避して削除します。30秒以内ならUndoできます。',
       confirmLabel: '削除する',
       destructive: true,
     );
@@ -739,19 +739,60 @@ extension _HomeDataActions on _HomePageState {
 
   Future<void> _deleteTripAndPhotos(String tripId) async {
     try {
+      await _pendingDeletionReady;
+      if (!_pendingDeletionAvailable) {
+        throw StateError('削除機能を初期化できませんでした');
+      }
       await _coordinator.runMutation(() async {
-        final trip = _data.trips.where((item) => item.id == tripId).firstOrNull;
-        if (trip == null) throw StateError('削除する旅行が見つかりません');
-        await _commitData(removeTrip(_data, tripId));
-        final failures = await _deleteFiles(trip.photos);
-        _showMessage(
-          failures == 0
-              ? '旅行と写真を削除しました'
-              : '旅行を削除しましたが、$failures枚のファイル削除に失敗しました',
+        final operation = await _pendingDeletion.deleteTrip(
+          data: _data,
+          tripId: tripId,
+          saveData: _commitData,
+        );
+        _schedulePendingExpiry(operation);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('旅行と写真を削除しました。30秒以内ならUndoできます'),
+            action: SnackBarAction(
+              label: 'Undo',
+              onPressed: () =>
+                  unawaited(_undoPendingDeletion(operation.operationId)),
+            ),
+          ),
         );
       });
     } catch (error) {
       _showError('旅行の削除', error);
+    }
+  }
+
+  Future<void> _undoPendingDeletion(String operationId) async {
+    try {
+      await _coordinator.runMutation(() async {
+        await _pendingDeletion.undo(
+          operationId: operationId,
+          data: _data,
+          saveData: _commitData,
+        );
+        _pendingUndoTimers.remove(operationId)?.cancel();
+        if (mounted) _showMessage('旅行と写真を元に戻しました');
+      });
+    } catch (error) {
+      if (mounted) _showError('削除の取り消し', error);
+    }
+  }
+
+  Future<void> _finalizePendingDeletion(String operationId) async {
+    try {
+      await _coordinator.runCleanup(() async {
+        final finalized = await _pendingDeletion.finalizeExpired();
+        if (finalized.contains(operationId) && mounted) {
+          _showMessage('Undo期限が切れたため、写真を完全に削除しました');
+        }
+      });
+    } catch (error) {
+      if (mounted) _showError('削除済み写真の回収', error);
     }
   }
 

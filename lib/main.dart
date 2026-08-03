@@ -13,6 +13,7 @@ import 'backup_service.dart';
 import 'models.dart';
 import 'offline_japan_map.dart';
 import 'operation_coordinator.dart';
+import 'pending_deletion.dart';
 import 'photo.dart';
 import 'import_progress.dart';
 import 'storage_cleanup.dart';
@@ -147,6 +148,8 @@ class _HomePageState extends State<HomePage> {
 
   late final OperationCoordinator _coordinator;
   late final CleanupRunner _cleanupRunner;
+  late final PendingDeletionManager _pendingDeletion;
+  late final Future<void> _pendingDeletionReady;
   late final Future<void> _initialization;
   AppData _data = AppData.empty();
   bool _isLoading = true;
@@ -157,7 +160,9 @@ class _HomePageState extends State<HomePage> {
   final Set<String> _terminalImportRequestIds = <String>{};
   ImportEvent? _importEvent;
   bool _isCleanupRunning = false;
+  bool _pendingDeletionAvailable = false;
   StreamSubscription<OperationStatus>? _statusSub;
+  final Map<String, Timer> _pendingUndoTimers = <String, Timer>{};
 
   /// 防御用に保持するrequestId集合の上限。Android側はrequestIdを毎回ユニークに
   /// 発行するため、ここに残るのは直近の終了・キャンセル履歴だけでよい。
@@ -169,6 +174,7 @@ class _HomePageState extends State<HomePage> {
     _coordinator = widget.operationCoordinator ?? OperationCoordinator();
     _cleanupRunner =
         widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
+    _pendingDeletionReady = _initializePendingDeletion();
     _initialization = _initialize();
     _shareChannel.setMethodCallHandler(_handleShareMethod);
     _statusSub = _coordinator.statusStream.listen((_) {
@@ -176,12 +182,50 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  Future<void> _initializePendingDeletion() async {
+    try {
+      final documents = await getApplicationDocumentsDirectory();
+      _pendingDeletion = PendingDeletionManager(
+        store: SharedPreferencesPendingDeletionStore(),
+        trashRoot: '${documents.path}/pending-deletions',
+      );
+      await _pendingDeletion.recover();
+      final pending = await _pendingDeletion.loadOperations();
+      for (final operation in pending) {
+        _schedulePendingExpiry(operation);
+      }
+      _pendingDeletionAvailable = true;
+    } catch (_) {
+      // Loading the main AppData remains authoritative. A pending-deletion
+      // recovery failure must not create an uncaught background exception or
+      // block unrelated import/startup flows; deletion is disabled until the
+      // next retry/restart.
+    }
+  }
+
   @override
   void dispose() {
+    for (final timer in _pendingUndoTimers.values) {
+      timer.cancel();
+    }
+    _pendingUndoTimers.clear();
     _statusSub?.cancel();
     _coordinator.dispose();
     _shareChannel.setMethodCallHandler(null);
     super.dispose();
+  }
+
+  void _schedulePendingExpiry(PendingDeletionOperation operation) {
+    _pendingUndoTimers.remove(operation.operationId)?.cancel();
+    final delay = operation.expiresAt.difference(DateTime.now().toUtc());
+    if (delay.isNegative || delay == Duration.zero) {
+      unawaited(_finalizePendingDeletion(operation.operationId));
+      return;
+    }
+    _pendingUndoTimers[operation.operationId] = Timer(delay, () {
+      _pendingUndoTimers.remove(operation.operationId);
+      unawaited(_finalizePendingDeletion(operation.operationId));
+    });
   }
 
   void _updateState(VoidCallback update) {
