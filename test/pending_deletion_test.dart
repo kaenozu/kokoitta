@@ -218,4 +218,67 @@ void main() {
     expect(await manager.loadOperations(), isEmpty);
     expect(op.operationId, isNotEmpty);
   });
+
+  test('期限切れ後のUndoは拒否され物理復元されない', () async {
+    var now = DateTime.utc(2026, 1, 2, 4);
+    final mutableManager = PendingDeletionManager(
+      store: store,
+      trashRoot: '${root.path}/trash',
+      now: () => now,
+    );
+    final deleted = await mutableManager.deleteTrip(
+      data: current,
+      tripId: 'trip-1',
+      saveData: (_) async {},
+    );
+    now = DateTime.utc(2026, 1, 2, 4, 1); // 期限超過
+    await expectLater(
+      mutableManager.undo(
+        operationId: deleted.operationId,
+        data: AppData.empty(),
+        saveData: (_) async {},
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(await original.exists(), isFalse);
+    expect(
+      (await mutableManager.loadOperations()).single.state,
+      PendingDeletionState.pending,
+    );
+  });
+
+  test('trashファイルが既に無い場合は削除成功としてmanifestを掃除する（冪等）', () async {
+    final deleted = await manager.deleteTrip(
+      data: current,
+      tripId: 'trip-1',
+      saveData: (_) async {},
+    );
+    final trashFile = File(deleted.items.single.trashPath);
+    expect(await trashFile.exists(), isTrue);
+    // 外部削除や前回中断でtrashファイルだけが無くなった状態を再現する。
+    await trashFile.delete();
+    final finalized = await manager.finalizeExpired(
+      at: DateTime.utc(2026, 1, 2, 4, 1),
+    );
+    expect(finalized, [deleted.operationId]);
+    expect(await manager.loadOperations(), isEmpty);
+  });
+
+  test('完全削除後に二重finalizeしても追加でfinalize結果を返さない', () async {
+    final deleted = await manager.deleteTrip(
+      data: current,
+      tripId: 'trip-1',
+      saveData: (_) async {},
+    );
+    final first = await manager.finalizeExpired(
+      at: DateTime.utc(2026, 1, 2, 4, 1),
+    );
+    expect(first, [deleted.operationId]);
+    expect(await manager.loadOperations(), isEmpty);
+    final second = await manager.finalizeExpired(
+      at: DateTime.utc(2026, 1, 2, 4, 2),
+    );
+    expect(second, isEmpty);
+    expect(await original.exists(), isFalse);
+  });
 }

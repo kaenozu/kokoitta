@@ -10,6 +10,7 @@ import 'package:kokoitta_app/import_progress.dart';
 import 'package:kokoitta_app/main.dart';
 import 'package:kokoitta_app/models.dart';
 import 'package:kokoitta_app/operation_coordinator.dart';
+import 'package:kokoitta_app/pending_deletion.dart';
 import 'package:kokoitta_app/storage_cleanup.dart';
 import 'package:kokoitta_app/trip_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -384,6 +385,39 @@ void main() {
       await tester.pump();
     }
     expect(find.text('写真を追加'), findsOneWidget);
+  }
+
+  /// [text] が画面に現れるまでポーリングする。実I/Oを伴う操作の完了待ち。
+  ///
+  /// SnackBarの入退場アニメーションを進めるため、fake clockも進める
+  /// （pump()だけでは進まず、待機中のSnackBarが表示されないことがある）。
+  Future<void> waitForText(
+    WidgetTester tester,
+    String text, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline) &&
+        tester.widgetList(find.text(text)).isEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.text(text), findsOneWidget);
+  }
+
+  /// 旅行タブの削除メニューから「写真も削除」を確定するまで操作する。
+  ///
+  /// 削除mutationは実ファイルI/OのためrunAsyncの中で呼ぶこと。メニュー・
+  /// ダイアログの開閉アニメーションはpumpAndSettleで完了させてからタップする。
+  Future<void> deleteTripViaMenu(WidgetTester tester) async {
+    await tester.tap(find.text('旅行'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('写真も削除'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('削除する'));
+    await tester.pump();
   }
 
   /// 共有元の一時ファイルを写真用ディレクトリに作る。
@@ -780,7 +814,10 @@ void main() {
       final trips = stored!['trips'] as List;
       final storedPhotos = trips.single['photos'] as List;
       expect(storedPhotos, hasLength(1));
-      expect((storedPhotos.single as Map<String, dynamic>)['originalName'], 'B.jpg');
+      expect(
+        (storedPhotos.single as Map<String, dynamic>)['originalName'],
+        'B.jpg',
+      );
     });
 
     expect(terminalEvent, isNotNull);
@@ -1176,5 +1213,110 @@ void main() {
       expect(await source.exists(), isTrue);
     });
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('期限到達でUndo SnackBarは消え、完全削除メッセージは一度だけ表示される', (tester) async {
+    seedAppData(<Map<String, Object>>[
+      tripRecord('trip-1', <File>[photoFiles[0]]),
+    ]);
+    final documentsDir = await createDocumentsDir(tester);
+    _mockPathProvider(documentsDir);
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        KokoittaApp(
+          cleanupRunner: _noopCleanup,
+          pendingDeletionBuilder: () => PendingDeletionManager(
+            store: SharedPreferencesPendingDeletionStore(),
+            trashRoot: '${documentsDir.path}/pending-deletions',
+            undoWindow: const Duration(seconds: 2),
+          ),
+        ),
+      );
+      await waitUntilLoaded(tester);
+      await deleteTripViaMenu(tester);
+      // 削除mutation（実ファイルI/O）と期限timer（実Timer）をrunAsync内で完結させる。
+      await waitForText(tester, '旅行と写真を削除しました。30秒以内ならUndoできます');
+    });
+
+    // Undo SnackBarはUndo可能な窓と同じ期間だけ表示される。
+    final undoSnackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+    expect(undoSnackBar.duration, const Duration(seconds: 2));
+
+    // 期限到達を実時間で待つ。fake-asyncでは発火しない実Timerがここで発火する。
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 2600)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    // Undo SnackBarは消え、完全削除メッセージが一度だけ表示される。
+    expect(find.text('旅行と写真を削除しました。30秒以内ならUndoできます'), findsNothing);
+    expect(find.text('Undo期限が切れたため、写真を完全に削除しました'), findsOneWidget);
+    expect(tester.widgetList(find.text('Undo期限が切れたため、写真を完全に削除しました')).length, 1);
+
+    // 退避ファイルは物理削除され、manifestも掃除されている。
+    await tester.runAsync(() async {
+      final trashRoot = Directory('${documentsDir.path}/pending-deletions');
+      if (await trashRoot.exists()) {
+        final remaining = await trashRoot
+            .list(recursive: true)
+            .where((entity) => entity is File)
+            .toList();
+        expect(remaining, isEmpty);
+      }
+      final preferences = await SharedPreferences.getInstance();
+      expect(preferences.getString('pendingDeletionManifestV1'), isNull);
+    });
+  });
+
+  testWidgets('Undo操作でUndo SnackBarは即座に消え、期限切れメッセージは出ない', (tester) async {
+    // 期限到達テストがphotoFiles[0]を物理削除するため、別ファイルを使う。
+    seedAppData(<Map<String, Object>>[
+      tripRecord('trip-1', <File>[photoFiles[1]]),
+    ]);
+    final documentsDir = await createDocumentsDir(tester);
+    _mockPathProvider(documentsDir);
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        KokoittaApp(
+          cleanupRunner: _noopCleanup,
+          pendingDeletionBuilder: () => PendingDeletionManager(
+            store: SharedPreferencesPendingDeletionStore(),
+            trashRoot: '${documentsDir.path}/pending-deletions',
+            undoWindow: const Duration(seconds: 2),
+          ),
+        ),
+      );
+      await waitUntilLoaded(tester);
+      await deleteTripViaMenu(tester);
+      await waitForText(tester, '旅行と写真を削除しました。30秒以内ならUndoできます');
+      // Undo SnackBarの表示アニメーションを完了させてからタップする。
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Undo'));
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await tester.pump();
+      await waitForText(tester, '旅行と写真を元に戻しました');
+    });
+
+    // Undo成功と同時にUndo SnackBarは消えている。
+    expect(find.text('旅行と写真を削除しました。30秒以内ならUndoできます'), findsNothing);
+
+    // 期限timerはUndoでキャンセルされるため、期限後も完全削除メッセージは出ない。
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 2600)),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Undo期限が切れたため、写真を完全に削除しました'), findsNothing);
+    expect(find.text('旅行と写真を元に戻しました'), findsOneWidget);
+
+    // 写真は元の場所へ復元され、manifestも消えている。
+    await tester.runAsync(() async {
+      expect(await photoFiles[1].exists(), isTrue);
+      final preferences = await SharedPreferences.getInstance();
+      expect(preferences.getString('pendingDeletionManifestV1'), isNull);
+    });
   });
 }

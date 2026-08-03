@@ -753,6 +753,8 @@ extension _HomeDataActions on _HomePageState {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
+            // Undo可能な窓が切れるまで表示を保ち、期限到達で必ず消えるようにする。
+            duration: _pendingDeletion.undoWindow,
             content: const Text('旅行と写真を削除しました。30秒以内ならUndoできます'),
             action: SnackBarAction(
               label: 'Undo',
@@ -776,7 +778,7 @@ extension _HomeDataActions on _HomePageState {
           saveData: _commitData,
         );
         _pendingUndoTimers.remove(operationId)?.cancel();
-        if (mounted) _showMessage('旅行と写真を元に戻しました');
+        if (mounted) _showMessageNow('旅行と写真を元に戻しました');
       });
     } catch (error) {
       if (mounted) _showError('削除の取り消し', error);
@@ -788,7 +790,7 @@ extension _HomeDataActions on _HomePageState {
       await _coordinator.runCleanup(() async {
         final finalized = await _pendingDeletion.finalizeExpired();
         if (finalized.contains(operationId) && mounted) {
-          _showMessage('Undo期限が切れたため、写真を完全に削除しました');
+          _showMessageNow('Undo期限が切れたため、写真を完全に削除しました');
         }
       });
     } catch (error) {

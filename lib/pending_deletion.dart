@@ -393,6 +393,13 @@ class PendingDeletionManager {
         if (item.physicalState == PendingDeletionPhysicalState.deleted) {
           continue;
         }
+        if (!File(item.trashPath).existsSync()) {
+          // 既に物理削除済み（二重finalize・外部削除）は成功として扱う。
+          // 対象外だとcleanupFailedへ固着してmanifestが残り、再起動のたびに
+          // 回収エラーが再発するため。
+          item.physicalState = PendingDeletionPhysicalState.deleted;
+          continue;
+        }
         try {
           await deleteFile(item.trashPath);
           item.physicalState = PendingDeletionPhysicalState.deleted;

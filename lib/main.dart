@@ -40,12 +40,14 @@ class KokoittaApp extends StatelessWidget {
     this.cleanupRunner,
     this.photoDeleteRunner,
     this.onImportEvent,
+    this.pendingDeletionBuilder,
   });
 
   /// 起動時cleanupの実行関数。テストで競合を制御するために注入可能。
   final CleanupRunner? cleanupRunner;
   final PhotoDeleteRunner? photoDeleteRunner;
   final void Function(ImportEvent event)? onImportEvent;
+  final PendingDeletionManager Function()? pendingDeletionBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -109,6 +111,7 @@ class KokoittaApp extends StatelessWidget {
         cleanupRunner: cleanupRunner,
         photoDeleteRunner: photoDeleteRunner,
         onImportEvent: onImportEvent,
+        pendingDeletionBuilder: pendingDeletionBuilder,
       ),
     );
   }
@@ -121,6 +124,7 @@ class HomePage extends StatefulWidget {
     this.cleanupRunner,
     this.photoDeleteRunner,
     this.onImportEvent,
+    this.pendingDeletionBuilder,
   });
 
   final OperationCoordinator? operationCoordinator;
@@ -129,6 +133,9 @@ class HomePage extends StatefulWidget {
   final CleanupRunner? cleanupRunner;
   final PhotoDeleteRunner? photoDeleteRunner;
   final void Function(ImportEvent event)? onImportEvent;
+
+  /// pending削除マネージャの生成関数。テストでUndo窓やストアを制御するために注入可能。
+  final PendingDeletionManager Function()? pendingDeletionBuilder;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -184,11 +191,16 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _initializePendingDeletion() async {
     try {
-      final documents = await getApplicationDocumentsDirectory();
-      _pendingDeletion = PendingDeletionManager(
-        store: SharedPreferencesPendingDeletionStore(),
-        trashRoot: '${documents.path}/pending-deletions',
-      );
+      final injected = widget.pendingDeletionBuilder;
+      if (injected != null) {
+        _pendingDeletion = injected();
+      } else {
+        final documents = await getApplicationDocumentsDirectory();
+        _pendingDeletion = PendingDeletionManager(
+          store: SharedPreferencesPendingDeletionStore(),
+          trashRoot: '${documents.path}/pending-deletions',
+        );
+      }
       await _pendingDeletion.recover();
       final pending = await _pendingDeletion.loadOperations();
       for (final operation in pending) {
