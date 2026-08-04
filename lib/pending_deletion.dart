@@ -41,7 +41,9 @@ class SharedPreferencesPendingDeletionStore
     final ok = encoded == null
         ? await preferences.remove(key)
         : await preferences.setString(key, encoded);
-    if (!ok) throw const FileSystemException('pending manifestを保存できませんでした');
+    if (!ok) {
+      throw const FileSystemException('pending manifestを保存できませんでした');
+    }
   }
 }
 
@@ -129,11 +131,14 @@ class PendingDeletionOperation {
     required this.createdAt,
     required this.expiresAt,
     required this.state,
-    required this.items,
-  });
+    required List<PendingDeletionItem> items,
+    int? tripIndex,
+  }) : items = items,
+       tripIndex = tripIndex ?? (items.isEmpty ? 0 : items.first.tripIndex);
 
   final String operationId;
   final Trip trip;
+  final int tripIndex;
   final DateTime createdAt;
   final DateTime expiresAt;
   PendingDeletionState state;
@@ -141,6 +146,7 @@ class PendingDeletionOperation {
 
   Map<String, Object?> toJson() => <String, Object?>{
     'operationId': operationId,
+    'tripIndex': tripIndex,
     'createdAt': createdAt.toIso8601String(),
     'expiresAt': expiresAt.toIso8601String(),
     'state': state.name,
@@ -165,9 +171,12 @@ class PendingDeletionOperation {
 
   factory PendingDeletionOperation.fromJson(Map<String, Object?> json) {
     final tripJson = _map(json['trip'], 'trip');
-    final photos = (_list(tripJson['photos'], 'trip.photos'))
+    final photos = _list(tripJson['photos'], 'trip.photos')
         .map((value) => _photoFromJson(_map(value, 'trip.photos[]')))
         .toList(growable: false);
+    final items = _list(json['items'], 'items')
+        .map((value) => PendingDeletionItem.fromJson(_map(value, 'items[]')))
+        .toList();
     final state = PendingDeletionState.values.byName(
       _string(json['state'], 'state'),
     );
@@ -180,6 +189,7 @@ class PendingDeletionOperation {
     if (createdAt == null || expiresAt == null) {
       throw const FormatException('manifest日時が不正です');
     }
+    final persistedTripIndex = json['tripIndex'];
     return PendingDeletionOperation(
       operationId: _string(json['operationId'], 'operationId'),
       trip: Trip(
@@ -187,12 +197,13 @@ class PendingDeletionOperation {
         title: _string(tripJson['title'], 'trip.title'),
         photos: photos,
       ),
+      tripIndex: persistedTripIndex == null
+          ? (items.isEmpty ? 0 : items.first.tripIndex)
+          : _nonNegativeInt(persistedTripIndex, 'tripIndex'),
       createdAt: createdAt,
       expiresAt: expiresAt,
       state: state,
-      items: _list(json['items'], 'items')
-          .map((value) => PendingDeletionItem.fromJson(_map(value, 'items[]')))
-          .toList(),
+      items: items,
     );
   }
 }
@@ -220,7 +231,9 @@ class PendingDeletionManager {
     if (raw == null) return <PendingDeletionOperation>[];
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is! Map) throw const FormatException('manifest rootが不正です');
+      if (decoded is! Map) {
+        throw const FormatException('manifest rootが不正です');
+      }
       final version = decoded['version'];
       final values = decoded['operations'];
       if (version != 1 || values is! List) {
@@ -261,15 +274,18 @@ class PendingDeletionManager {
     if (operations.any((operation) => operation.trip.id == tripId)) {
       throw StateError('同じ旅行の削除が既にpendingです');
     }
+
     final tripIndex = data.trips.indexWhere((trip) => trip.id == tripId);
     if (tripIndex < 0) {
       throw StateError('削除する旅行が見つかりません');
     }
+
     final trip = data.trips[tripIndex];
     final operationId =
         'delete-${now().microsecondsSinceEpoch}-${tripId.hashCode.abs()}';
     final operationDirectory = Directory('$trashRoot/$operationId');
     await operationDirectory.create(recursive: true);
+
     final items = <PendingDeletionItem>[];
     for (var index = 0; index < trip.photos.length; index++) {
       final photo = trip.photos[index];
@@ -289,42 +305,91 @@ class PendingDeletionManager {
         ),
       );
     }
+
     final operation = PendingDeletionOperation(
       operationId: operationId,
       trip: trip,
+      tripIndex: tripIndex,
       createdAt: now(),
       expiresAt: now().add(undoWindow),
       state: PendingDeletionState.staged,
       items: items,
     );
+    final withOperation = <PendingDeletionOperation>[...operations, operation];
     final moved = <PendingDeletionItem>[];
+
+    // Phase 1: stage physical files and persist the recovery manifest.
     try {
       for (final item in items) {
         await moveFile(item.originalPath, item.trashPath);
         moved.add(item);
       }
-      await _save(<PendingDeletionOperation>[...operations, operation]);
-      final next = data.copyWith(
-        trips: <Trip>[...data.trips]..removeAt(tripIndex),
+      await _save(withOperation);
+    } catch (error) {
+      final restoreFailures = await _restoreMoved(moved);
+      if (restoreFailures.isEmpty) {
+        try {
+          final persisted = await loadOperations();
+          if (persisted.any(
+            (candidate) => candidate.operationId == operationId,
+          )) {
+            await _save(operations);
+          }
+        } catch (_) {
+          // Preserve the original staging error. A partially written manifest
+          // is safer than masking the failure with a cleanup exception.
+        }
+        Error.throwWithStackTrace(error, StackTrace.current);
+      }
+      operation.state = PendingDeletionState.undoRollbackFailed;
+      await _save(withOperation);
+      throw StateError(
+        '写真の退避に失敗し、${restoreFailures.length}件を元に戻せませんでした: '
+        '$error / $restoreFailures',
       );
-      try {
-        await saveData(next);
-      } catch (_) {
-        await _restoreMoved(moved);
+    }
+
+    // Phase 2: commit the AppData deletion. Before this succeeds, a failure can
+    // still be rolled back to the original state.
+    final next = data.copyWith(
+      trips: <Trip>[...data.trips]..removeAt(tripIndex),
+    );
+    try {
+      await saveData(next);
+    } catch (error) {
+      final restoreFailures = await _restoreMoved(moved);
+      if (restoreFailures.isEmpty) {
         await _save(operations);
-        rethrow;
+        Error.throwWithStackTrace(error, StackTrace.current);
       }
-      operation.state = PendingDeletionState.pending;
-      await _save(<PendingDeletionOperation>[...operations, operation]);
+      operation.state = PendingDeletionState.undoRollbackFailed;
+      await _save(withOperation);
+      throw StateError(
+        '旅行削除の保存に失敗し、${restoreFailures.length}件を元に戻せませんでした: '
+        '$error / $restoreFailures',
+      );
+    }
+
+    // Phase 3: AppData is committed. Never restore files or remove the staged
+    // manifest from this point, because doing so would orphan the deleted trip.
+    operation.state = PendingDeletionState.pending;
+    try {
+      await _save(withOperation);
       return operation;
-    } catch (_) {
-      if (moved.isNotEmpty) await _restoreMoved(moved);
-      if ((await loadOperations()).any(
-        (candidate) => candidate.operationId == operationId,
-      )) {
-        await _save(operations);
+    } catch (error) {
+      operation.state = PendingDeletionState.staged;
+      try {
+        await _save(withOperation);
+      } catch (safeguardError) {
+        throw StateError(
+          '旅行削除後のmanifest更新に失敗し、回復用manifestの再保存にも失敗しました: '
+          '$error / $safeguardError',
+        );
       }
-      rethrow;
+      throw StateError(
+        '旅行削除後のmanifest更新に失敗しました。'
+        '回復用manifestを保持したため、アプリ再起動後に処理を再開します: $error',
+      );
     }
   }
 
@@ -341,11 +406,10 @@ class PendingDeletionManager {
     if (!now().isBefore(operation.expiresAt)) {
       throw StateError('Undo期限が切れています');
     }
-    // P1: 旅行IDの重複は物理復元より先に検査する。重複時はoriginal/trashを
-    // 不変に保ったままmanifestを維持し、成功扱いにしない（再試行可能なまま）。
     if (data.trips.any((trip) => trip.id == operation.trip.id)) {
       throw StateError('復元対象の旅行が既に存在します');
     }
+
     final restored = <PendingDeletionItem>[];
     try {
       for (final item in operation.items) {
@@ -360,13 +424,14 @@ class PendingDeletionManager {
         item.physicalState = PendingDeletionPhysicalState.restored;
         restored.add(item);
       }
-    } catch (_) {
+    } catch (error) {
       operation.state = PendingDeletionState.undoFailed;
       await _save(operations);
-      rethrow;
+      Error.throwWithStackTrace(error, StackTrace.current);
     }
+
     final trips = <Trip>[...data.trips];
-    final insertAt = operation.items.first.tripIndex.clamp(0, trips.length);
+    final insertAt = operation.tripIndex.clamp(0, trips.length);
     final restoredPhotos = [...operation.items]
       ..sort((a, b) => a.photoIndex.compareTo(b.photoIndex));
     trips.insert(
@@ -377,20 +442,16 @@ class PendingDeletionManager {
             .toList(),
       ),
     );
+
     try {
       await saveData(data.copyWith(trips: trips));
     } catch (error) {
-      // P1: AppData保存失敗時は復元済みファイルを逆順でtrashへ戻す。
       final rollbackFailures = await _restageRestored(restored);
       if (rollbackFailures.isEmpty) {
-        // 全てtrashへ戻せた: stagedへ戻し、再試行可能なpendingを維持して
-        // 元例外を再throwする。
         operation.state = PendingDeletionState.pending;
         await _save(operations);
-        rethrow;
+        Error.throwWithStackTrace(error, StackTrace.current);
       }
-      // 一部戻せなかった: item毎の実際のphysical stateを保存し、rollback不完全
-      // をmanifestで保持する。cleanup/finalizeはこのoperationを削除しない。
       operation.state = PendingDeletionState.undoRollbackFailed;
       await _save(operations);
       throw StateError(
@@ -398,14 +459,11 @@ class PendingDeletionManager {
         'rollbackで${rollbackFailures.length}件失敗しました: $rollbackFailures',
       );
     }
+
     operations.remove(operation);
     await _save(operations);
   }
 
-  /// 復元済み（restored）itemのファイルを逆順でtrashへ戻す。
-  ///
-  /// item毎に実際に戻せたかを [PendingDeletionPhysicalState] へ反映し、失敗した
-  /// itemを成功扱いしない。戻せなかった失敗情報の一覧を返す。
   Future<List<Object>> _restageRestored(
     Iterable<PendingDeletionItem> restored,
   ) async {
@@ -413,7 +471,9 @@ class PendingDeletionManager {
     for (final item in restored.toList().reversed) {
       try {
         if (!File(item.originalPath).existsSync()) {
-          failures.add(StateError('復元元のファイルが見つかりません: ${item.originalPath}'));
+          failures.add(
+            StateError('復元元のファイルが見つかりません: ${item.originalPath}'),
+          );
           continue;
         }
         await moveFile(item.originalPath, item.trashPath);
@@ -430,23 +490,18 @@ class PendingDeletionManager {
     final finalized = <String>[];
     for (final operation in [...operations]) {
       if ((at ?? now()).isBefore(operation.expiresAt)) continue;
-      // 復旧が必要なoperation（undo失敗・rollback不完全・staged）は自動で
-      // 確定削除せずmanifestを保持する。
       if (!_isExpiredFinalizable(operation)) continue;
+
       var failed = false;
       for (final item in operation.items) {
         if (item.physicalState == PendingDeletionPhysicalState.deleted) {
           continue;
         }
         if (item.physicalState == PendingDeletionPhysicalState.restored) {
-          // 不完全Undoの残骸であり、trash欠損をdeleted扱いにしない。
-          // このoperationはそのままmanifestへ保持する。
           failed = true;
           break;
         }
         if (!File(item.trashPath).existsSync()) {
-          // staged+trash欠損: 既に物理削除済み（二重finalize・外部削除）として
-          // 冪等にdeleted扱いする。上記のrestored+欠損とは区別している。
           item.physicalState = PendingDeletionPhysicalState.deleted;
           continue;
         }
@@ -457,6 +512,7 @@ class PendingDeletionManager {
           failed = true;
         }
       }
+
       if (failed) {
         operation.state = PendingDeletionState.cleanupFailed;
       } else {
@@ -468,11 +524,6 @@ class PendingDeletionManager {
     return finalized;
   }
 
-  /// [finalizeExpired] で自動確定削除してよいoperationかを判定する。
-  ///
-  /// pending（通常の遅延削除）とcleanupFailed（再試行）だけを対象にし、
-  /// staged（recoverの責務）やundo失敗・rollback不完全は破壊的な自動確定から
-  /// 除外してmanifestを保持する。
   bool _isExpiredFinalizable(PendingDeletionOperation operation) {
     return switch (operation.state) {
       PendingDeletionState.pending ||
@@ -484,13 +535,31 @@ class PendingDeletionManager {
     };
   }
 
-  Future<void> _restoreMoved(Iterable<PendingDeletionItem> items) async {
+  Future<List<Object>> _restoreMoved(
+    Iterable<PendingDeletionItem> items,
+  ) async {
+    final failures = <Object>[];
     for (final item in items.toList().reversed) {
-      if (File(item.originalPath).existsSync()) continue;
-      if (File(item.trashPath).existsSync()) {
-        await moveFile(item.trashPath, item.originalPath);
+      try {
+        if (File(item.originalPath).existsSync()) {
+          item.physicalState = PendingDeletionPhysicalState.restored;
+          continue;
+        }
+        if (File(item.trashPath).existsSync()) {
+          await moveFile(item.trashPath, item.originalPath);
+          item.physicalState = PendingDeletionPhysicalState.restored;
+          continue;
+        }
+        failures.add(
+          StateError(
+            'originalとtrashの両方にファイルがありません: ${item.originalPath}',
+          ),
+        );
+      } catch (error) {
+        failures.add(error);
       }
     }
+    return failures;
   }
 }
 
@@ -501,9 +570,6 @@ String _basename(String path) => path.split(RegExp(r'[/\\]')).last;
 
 String _safeAbsolutePath(Object? value) {
   final raw = _string(value, 'path');
-  // Keep the persisted path in the platform-native representation.  The
-  // separator-normalized value is used only for validation so a Windows path
-  // is not rewritten into a different string identity at the model boundary.
   final normalized = raw.replaceAll('\\', '/');
   if (normalized.startsWith('//') ||
       normalized.contains('/../') ||
@@ -529,17 +595,24 @@ Photo _photoFromJson(Map<String, Object?> json) => Photo(
   originalName: _optionalString(json['originalName']),
   mimeType: _optionalString(json['mimeType']),
 );
+
 Map<String, Object?> _map(Object? value, String field) => value is Map
     ? Map<String, Object?>.from(value)
     : throw FormatException('$fieldがMapではありません');
+
 List<Object?> _list(Object? value, String field) => value is List
     ? value.cast<Object?>()
     : throw FormatException('$fieldがListではありません');
+
 String _string(Object? value, String field) =>
     value is String && value.isNotEmpty
     ? value
     : throw FormatException('$fieldが不正です');
+
 String? _optionalString(Object? value) =>
     value == null ? null : _string(value, 'metadata');
+
 int _nonNegativeInt(Object? value, String field) =>
-    value is int && value >= 0 ? value : throw FormatException('$fieldが不正です');
+    value is int && value >= 0
+    ? value
+    : throw FormatException('$fieldが不正です');
