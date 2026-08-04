@@ -9,8 +9,10 @@ extension _HomeView on _HomePageState {
 
   bool get _photoQuotaReached => _photoCount >= _photoQuota;
 
-  bool get _isDisabled =>
-      _isLoading || _coordinator.isBusy || _isImportBusy || _photoQuotaReached;
+  bool get _isDisabled => _isLoading || _coordinator.isBusy || _isImportBusy;
+
+  bool get _cannotAddPhotos =>
+      _isDisabled || _loadError != null || _photoQuotaReached;
 
   Widget _buildPage(BuildContext context) {
     return Scaffold(
@@ -40,9 +42,7 @@ extension _HomeView on _HomePageState {
               ],
             ),
           IconButton(
-            onPressed: _isDisabled || _loadError != null || _photoQuotaReached
-                ? null
-                : _addPhotos,
+            onPressed: _cannotAddPhotos ? null : _addPhotos,
             icon: const Icon(Icons.add_photo_alternate_outlined),
             tooltip: '写真を追加',
           ),
@@ -73,7 +73,7 @@ extension _HomeView on _HomePageState {
       floatingActionButton: _isLoading || _loadError != null
           ? null
           : FloatingActionButton.extended(
-              onPressed: _isDisabled ? null : _addPhotos,
+              onPressed: _cannotAddPhotos ? null : _addPhotos,
               icon: const Icon(Icons.add_a_photo),
               label: const Text('写真を追加'),
             ),
@@ -172,7 +172,7 @@ extension _HomeView on _HomePageState {
                     backgroundColor: Theme.of(context).colorScheme.secondary,
                     foregroundColor: Theme.of(context).colorScheme.onSecondary,
                   ),
-                  onPressed: _isDisabled ? null : _addPhotos,
+                  onPressed: _cannotAddPhotos ? null : _addPhotos,
                   icon: const Icon(Icons.add_a_photo),
                   label: const Text('写真を読み込む'),
                 ),
@@ -312,7 +312,7 @@ extension _HomeView on _HomePageState {
             const Text('旅行がありません'),
             const SizedBox(height: 16),
             FilledButton.icon(
-              onPressed: _isDisabled ? null : _addPhotos,
+              onPressed: _cannotAddPhotos ? null : _addPhotos,
               icon: const Icon(Icons.add_a_photo),
               label: const Text('写真を追加'),
             ),
@@ -476,7 +476,7 @@ extension _HomeView on _HomePageState {
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
-                onPressed: _isDisabled
+                onPressed: _cannotAddPhotos
                     ? null
                     : () {
                         Navigator.pop(sheetContext);
