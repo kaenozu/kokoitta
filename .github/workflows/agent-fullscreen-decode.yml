@@ -1,0 +1,92 @@
+name: Agent fullscreen decode cap
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/47-fullscreen-decode-cap-20260805
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          cache: true
+      - name: Apply focused viewer change
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('lib/home_view.dart')
+          source = path.read_text(encoding='utf-8')
+          old = '''        itemBuilder: (context, index) => InteractiveViewer(
+          minScale: 1,
+          maxScale: 4,
+          child: Center(
+            child: Image.file(
+              widget.photos[index].file,
+              fit: BoxFit.contain,
+              errorBuilder: (_, _, _) =>
+                  const Icon(Icons.broken_image_outlined, size: 72),
+            ),
+          ),
+        ),
+          '''
+          new = '''        itemBuilder: (context, index) => LayoutBuilder(
+          builder: (context, constraints) {
+            final dimension = fullscreenDecodeDimension(
+              logicalWidth: constraints.maxWidth,
+              logicalHeight: constraints.maxHeight,
+              devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+            );
+            return InteractiveViewer(
+              minScale: 1,
+              maxScale: 4,
+              child: Center(
+                child: Image.file(
+                  widget.photos[index].file,
+                  fit: BoxFit.contain,
+                  cacheWidth: dimension,
+                  errorBuilder: (_, _, _) =>
+                      const Icon(Icons.broken_image_outlined, size: 72),
+                ),
+              ),
+            );
+          },
+        ),
+          '''
+          if source.count(old) != 1:
+              raise SystemExit('Unexpected fullscreen viewer source shape')
+          path.write_text(source.replace(old, new), encoding='utf-8')
+      - name: Verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          dart format lib/image_decode.dart lib/home_view.dart test/fullscreen_decode_test.dart
+          flutter analyze
+          flutter test test/image_decode_test.dart test/fullscreen_decode_test.dart
+          flutter test
+          flutter build apk --debug
+          git diff --check
+      - name: Commit focused change
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add lib/home_view.dart lib/image_decode.dart test/fullscreen_decode_test.dart
+          git commit -m 'fix: cap fullscreen image decode dimensions'
+          git push origin HEAD:agent/47-fullscreen-decode-cap-20260805
