@@ -225,21 +225,28 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<bool> _initializePendingDeletion() => _buildPendingDeletion();
+  Future<bool> _initializePendingDeletion() =>
+      _buildPendingDeletion(requireManager: false);
 
   /// pending削除マネージャを構築・回復し、成功時のみ [true] を返す。
   ///
-  /// 初期化失敗時に再試行できるよう、[deleteTripAndPhotos] のような利用側が
-  /// その都度呼び出せる形にしている。
-  Future<bool> _buildPendingDeletion() async {
+  /// [requireManager] がfalseかつmanifestが無い通常起動ではpath_providerを呼ばず、
+  /// manager生成を最初の削除操作まで遅延する。
+  Future<bool> _buildPendingDeletion({bool requireManager = true}) async {
     try {
       final injected = widget.pendingDeletionBuilder;
       if (injected != null) {
         _pendingDeletion = injected();
       } else {
+        final store = SharedPreferencesPendingDeletionStore();
+        if (!requireManager && await store.load() == null) {
+          _pendingDeletion = null;
+          _pendingDeletionAvailable = true;
+          return true;
+        }
         final documents = await getApplicationDocumentsDirectory();
         _pendingDeletion = PendingDeletionManager(
-          store: SharedPreferencesPendingDeletionStore(),
+          store: store,
           trashRoot: '${documents.path}/pending-deletions',
         );
       }
