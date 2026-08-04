@@ -604,17 +604,27 @@ class _PhotoViewerState extends State<_PhotoViewer> {
       body: PageView.builder(
         controller: _controller,
         itemCount: widget.photos.length,
-        itemBuilder: (context, index) => InteractiveViewer(
-          minScale: 1,
-          maxScale: 4,
-          child: Center(
-            child: Image.file(
-              widget.photos[index].file,
-              fit: BoxFit.contain,
-              errorBuilder: (_, _, _) =>
-                  const Icon(Icons.broken_image_outlined, size: 72),
-            ),
-          ),
+        itemBuilder: (context, index) => LayoutBuilder(
+          builder: (context, constraints) {
+            final dimension = fullscreenDecodeDimension(
+              logicalWidth: constraints.maxWidth,
+              logicalHeight: constraints.maxHeight,
+              devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+            );
+            return InteractiveViewer(
+              minScale: 1,
+              maxScale: 4,
+              child: Center(
+                child: Image.file(
+                  widget.photos[index].file,
+                  fit: BoxFit.contain,
+                  cacheWidth: dimension,
+                  errorBuilder: (_, _, _) =>
+                      const Icon(Icons.broken_image_outlined, size: 72),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
