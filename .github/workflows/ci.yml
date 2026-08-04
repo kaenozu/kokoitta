@@ -8,7 +8,6 @@ permissions:
 
 jobs:
   apply-and-verify:
-    if: ${{ !contains(github.event.pull_request.head.sha, 'never') && !contains(github.event.pull_request.title, '[agent-applied]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -37,15 +36,17 @@ jobs:
           git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
           python3 - <<'PY'
           from pathlib import Path
-          import textwrap
+          import subprocess
 
           path = Path('.github/workflows/agent-47-apply.yml')
-          source = path.read_text(encoding='utf-8')
-          marker = "          python3 - <<'PY'\n"
-          start = source.index(marker) + len(marker)
-          end = source.index("\n          PY", start)
-          code = textwrap.dedent(source[start:end])
-          exec(compile(code, str(path), 'exec'), {'__name__': '__main__'})
+          lines = path.read_text(encoding='utf-8').splitlines()
+          name_index = lines.index('      - name: Apply implementation')
+          run_index = next(i for i in range(name_index, len(lines)) if lines[i] == '        run: |')
+          end_index = next(i for i in range(run_index + 1, len(lines)) if lines[i].startswith('      - name: Verify changes'))
+          shell_lines = []
+          for line in lines[run_index + 1:end_index]:
+              shell_lines.append(line[10:] if line.startswith('          ') else line)
+          subprocess.run(['bash', '-euo', 'pipefail'], input='\n'.join(shell_lines), text=True, check=True)
           PY
 
       - name: Verify changes
