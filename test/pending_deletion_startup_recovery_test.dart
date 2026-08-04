@@ -78,6 +78,38 @@ void main() {
     expect(await fixture.trash.exists(), isFalse);
   });
 
+  testWidgets('復元rename完了後・manifest反映前の中断を次回起動で完了する', (
+    tester,
+  ) async {
+    final fixture = await _createFixture();
+    addTearDown(fixture.dispose);
+    await TripStore().save(
+      AppData(
+        trips: <Trip>[fixture.trip],
+        unassignedPhotos: const <Photo>[],
+        prefectureStates: const <String, String>{},
+      ),
+    );
+    await fixture.saveManifest();
+    await fixture.trash.rename(fixture.original.path);
+
+    await tester.pumpWidget(
+      KokoittaApp(
+        cleanupRunner: _noopCleanup,
+        pendingDeletionBuilder: () => fixture.manager,
+      ),
+    );
+
+    await tester.runAsync(() async {
+      await _waitForNoOperations(fixture.manager);
+    });
+
+    expect(await fixture.manager.loadOperations(), isEmpty);
+    expect(await fixture.original.exists(), isTrue);
+    expect(await fixture.original.readAsBytes(), <int>[1, 2, 3]);
+    expect(await fixture.trash.exists(), isFalse);
+  });
+
   testWidgets('originalとtrashが両方ある曖昧状態は変更せずstaged manifestを保持する', (
     tester,
   ) async {
