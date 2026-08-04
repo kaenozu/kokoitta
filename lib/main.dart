@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 
@@ -34,6 +35,84 @@ typedef CleanupRunner = Future<void> Function(AppData data);
 ///
 /// 通常は端末ファイルを削除し、テストではrollback後の部分失敗を注入する。
 typedef PhotoDeleteRunner = Future<int> Function(Iterable<Photo> photos);
+
+/// 起動時にstaged削除を現在のAppDataと照合して回復する。
+///
+/// deleteTripは写真退避とstaged manifest保存後にAppDataをcommitし、その後で
+/// manifestをpendingへ更新する。stagedが残っている場合、AppDataに旅行が
+/// 存在するかでcommit前後を判定する。
+///
+/// - 旅行が存在する: commit前として写真を元pathへ戻し、manifestを除去する。
+/// - 旅行が存在しない: commit後として写真をtrashに維持し、pendingへ進める。
+/// - 物理状態が曖昧: 変更せずmanifestを保持する。
+Future<List<PendingDeletionOperation>> _recoverPendingDeletions({
+  required PendingDeletionManager manager,
+  required AppData data,
+}) async {
+  final operations = await manager.loadOperations();
+
+  for (final operation in [...operations]) {
+    if (operation.state != PendingDeletionState.staged) continue;
+    if (!_isUnambiguousStaged(operation)) continue;
+
+    final tripStillExists = data.trips.any(
+      (trip) => trip.id == operation.trip.id,
+    );
+    if (!tripStillExists) {
+      operation.state = PendingDeletionState.pending;
+      await _savePendingOperations(manager, operations);
+      continue;
+    }
+
+    try {
+      for (final item in operation.items.reversed) {
+        await manager.moveFile(item.trashPath, item.originalPath);
+        item.physicalState = PendingDeletionPhysicalState.restored;
+        // 複数写真の途中で停止しても復元済みitemをmanifestに保持する。
+        await _savePendingOperations(manager, operations);
+      }
+    } catch (_) {
+      operation.state = PendingDeletionState.undoRollbackFailed;
+      await _savePendingOperations(manager, operations);
+      rethrow;
+    }
+
+    operations.remove(operation);
+    await _savePendingOperations(manager, operations);
+  }
+
+  await manager.finalizeExpired();
+  return manager.loadOperations();
+}
+
+bool _isUnambiguousStaged(PendingDeletionOperation operation) {
+  for (final item in operation.items) {
+    if (item.physicalState != PendingDeletionPhysicalState.staged) {
+      return false;
+    }
+    if (File(item.originalPath).existsSync()) return false;
+    if (!File(item.trashPath).existsSync()) return false;
+  }
+  return true;
+}
+
+Future<void> _savePendingOperations(
+  PendingDeletionManager manager,
+  List<PendingDeletionOperation> operations,
+) async {
+  if (operations.isEmpty) {
+    await manager.store.save(null);
+    return;
+  }
+  await manager.store.save(
+    jsonEncode(<String, Object?>{
+      'version': 1,
+      'operations': operations
+          .map((operation) => operation.toJson())
+          .toList(),
+    }),
+  );
+}
 
 class KokoittaApp extends StatelessWidget {
   const KokoittaApp({
@@ -181,8 +260,11 @@ class _HomePageState extends State<HomePage> {
     _coordinator = widget.operationCoordinator ?? OperationCoordinator();
     _cleanupRunner =
         widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
-    unawaited(_initializePendingDeletion());
-    _initialization = _initialize();
+    // AppDataをロードしてからstaged manifestを照合する。これにより起動順序の
+    // raceで空AppDataをcommit済みと誤判定しない。
+    _initialization = _initialize().then((_) async {
+      if (_loadError == null && mounted) await _initializePendingDeletion();
+    });
     _shareChannel.setMethodCallHandler(_handleShareMethod);
     _statusSub = _coordinator.statusStream.listen((_) {
       if (mounted) _updateState(() {});
@@ -209,8 +291,10 @@ class _HomePageState extends State<HomePage> {
           trashRoot: '${documents.path}/pending-deletions',
         );
       }
-      await _pendingDeletion!.recover();
-      final pending = await _pendingDeletion!.loadOperations();
+      final pending = await _recoverPendingDeletions(
+        manager: _pendingDeletion!,
+        data: _data,
+      );
       for (final operation in pending) {
         _schedulePendingExpiry(operation);
       }
