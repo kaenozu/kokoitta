@@ -196,10 +196,17 @@ class _HomePageState extends State<HomePage> {
       final loaded = await _store.load();
       if (!mounted) return;
       _updateState(() => _data = loaded);
-      await _initializePendingDeletion();
+      final recoveryReady = await _initializePendingDeletion();
       if (!mounted) return;
       _updateState(() => _isLoading = false);
-      _scheduleStartupCleanup();
+      if (recoveryReady) {
+        _scheduleStartupCleanup();
+      } else {
+        developer.log(
+          'startup cleanup skipped: pending deletion recovery unresolved',
+          name: 'kokoitta',
+        );
+      }
       await _consumeInitialSharedUris();
     } catch (error) {
       if (!mounted) return;
@@ -210,9 +217,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _initializePendingDeletion() async {
-    await _buildPendingDeletion();
-  }
+  Future<bool> _initializePendingDeletion() => _buildPendingDeletion();
 
   /// pending削除マネージャを構築・回復し、成功時のみ [true] を返す。
   ///
@@ -234,10 +239,24 @@ class _HomePageState extends State<HomePage> {
         manager: _pendingDeletion!,
         data: _data,
       );
-      for (final operation in pending) {
+      final recoveryBlocked = pending.any(
+        (operation) => switch (operation.state) {
+          PendingDeletionState.pending ||
+          PendingDeletionState.cleanupFailed => false,
+          PendingDeletionState.staged ||
+          PendingDeletionState.undoFailed ||
+          PendingDeletionState.undoCommitFailed ||
+          PendingDeletionState.undoRollbackFailed => true,
+        },
+      );
+      for (final operation in pending.where(
+        (operation) =>
+            operation.state == PendingDeletionState.pending ||
+            operation.state == PendingDeletionState.cleanupFailed,
+      )) {
         _schedulePendingExpiry(operation);
       }
-      _pendingDeletionAvailable = true;
+      _pendingDeletionAvailable = !recoveryBlocked;
     } catch (error, stackTrace) {
       _pendingDeletion = null;
       _pendingDeletionAvailable = false;
