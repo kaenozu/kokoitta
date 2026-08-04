@@ -329,17 +329,12 @@ class MainActivity : FlutterActivity() {
         )
         val mimeType = resolver.getType(uri)
         val displayName = resolveDisplayName(resolver, uri)
-        val extension = resolveExtension(mimeType, displayName)
-            ?: return UriCopyResult(
-                errorCode = "unsupported_format",
-                reason = "未対応の形式です: ${mimeType ?: "不明"}",
-            )
         if (remainingRequestBytes <= 0) {
             return UriCopyResult(errorCode = "total_size_exceeded", reason = "合計容量の上限（700MB）を超えています")
         }
 
         val tempFile = try {
-            File.createTempFile("share_${session.requestId}_$index-", ".$extension", cacheDir)
+            File.createTempFile("share_${session.requestId}_$index-", ".part", cacheDir)
                 .also { session.tempFiles += it }
         } catch (error: IOException) {
             return UriCopyResult(errorCode = "copy_failed", reason = "一時ファイル作成失敗: ${error.message}")
@@ -371,11 +366,28 @@ class MainActivity : FlutterActivity() {
                     }
                     failedTemp(tempFile, code, "サイズ上限を超えたため取り込みを中断しました")
                 }
-                StopReason.COMPLETED -> UriCopyResult(
-                    file = tempFile,
-                    displayName = displayName,
-                    mimeType = mimeType,
-                )
+                StopReason.COMPLETED -> {
+                    val validation = SharedImageFormatValidator.validate(
+                        file = tempFile,
+                        declaredMimeType = mimeType,
+                        displayName = displayName,
+                    )
+                    val detectedFormat = validation.format
+                    if (validation.errorCode != null || detectedFormat == null) {
+                        failedTemp(
+                            tempFile,
+                            validation.errorCode ?: "unsupported_format",
+                            validation.reason ?: "未対応または破損した画像です",
+                        )
+                    } else {
+                        val finalized = finalizeTempFile(tempFile, detectedFormat.extension, session)
+                        UriCopyResult(
+                            file = finalized,
+                            displayName = displayName,
+                            mimeType = detectedFormat.canonicalMimeType,
+                        )
+                    }
+                }
             }
         } catch (error: SecurityException) {
             failedTemp(tempFile, "cannot_open", "ストレージアクセスが拒否されました")
@@ -384,6 +396,23 @@ class MainActivity : FlutterActivity() {
         } catch (error: OutOfMemoryError) {
             failedTemp(tempFile, "copy_failed", "ファイルサイズが大きすぎて処理できません")
         }
+    }
+
+    private fun finalizeTempFile(
+        temporaryFile: File,
+        extension: String,
+        session: RequestSession,
+    ): File {
+        val finalFile = File(
+            temporaryFile.parentFile,
+            "${temporaryFile.name.substringBeforeLast('.')}.$extension",
+        )
+        if (!temporaryFile.renameTo(finalFile)) {
+            throw IOException("一時画像の形式確定に失敗しました")
+        }
+        session.tempFiles.remove(temporaryFile)
+        session.tempFiles += finalFile
+        return finalFile
     }
 
     private fun failedTemp(file: File, code: String, reason: String): UriCopyResult {
@@ -439,36 +468,8 @@ class MainActivity : FlutterActivity() {
         "reason" to reason,
     )
 
-    internal fun resolveExtension(mimeType: String?, displayName: String?): String? {
-        val mimeToExt = mapOf(
-            "image/jpeg" to "jpg",
-            "image/png" to "png",
-            "image/heic" to "heic",
-            "image/heif" to "heic",
-            "image/webp" to "webp",
-            "image/gif" to "gif",
-            "image/bmp" to "bmp",
-            "image/x-ms-bmp" to "bmp",
-            "image/vnd.wap.wbmp" to "wbmp",
-            "image/svg+xml" to "svg",
-            "image/tiff" to "tiff",
-            "image/x-icon" to "ico",
-        )
-        val knownImageExtensions = setOf(
-            "jpg", "jpeg", "png", "heic", "heif", "webp", "gif",
-            "bmp", "wbmp", "svg", "tiff", "tif", "ico",
-        )
-        val fromMime = mimeType?.lowercase()?.let { mimeToExt[it] }
-        if (fromMime != null) return fromMime
-        if (mimeType != null && mimeType.startsWith("image/") && displayName != null) {
-            val dotIndex = displayName.lastIndexOf('.')
-            if (dotIndex >= 0 && dotIndex < displayName.length - 1) {
-                val ext = displayName.substring(dotIndex + 1).lowercase()
-                if (ext in knownImageExtensions) return ext
-            }
-        }
-        return null
-    }
+    internal fun resolveExtension(mimeType: String?, displayName: String?): String? =
+        SharedImageFormatValidator.claimedFormat(mimeType, displayName)?.extension
 
     private fun resolveDisplayName(resolver: android.content.ContentResolver, uri: Uri): String? = try {
         resolver.query(uri, null, null, null, null)?.use {
