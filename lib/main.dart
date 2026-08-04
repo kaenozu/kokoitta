@@ -182,15 +182,32 @@ class _HomePageState extends State<HomePage> {
     _coordinator = widget.operationCoordinator ?? OperationCoordinator();
     _cleanupRunner =
         widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
-    // AppDataをロードしてからstaged manifestを照合する。これにより起動順序の
-    // raceで空AppDataをcommit済みと誤判定しない。
-    _initialization = _initialize().then((_) async {
-      if (_loadError == null && mounted) await _initializePendingDeletion();
-    });
+    _initialization = _initializeWithPendingRecovery();
     _shareChannel.setMethodCallHandler(_handleShareMethod);
     _statusSub = _coordinator.statusStream.listen((_) {
       if (mounted) _updateState(() {});
     });
+  }
+
+  /// AppDataをロードした直後にpending削除を回復し、その後でcleanupと共有取込を
+  /// 開始する。空AppDataでの誤判定と、回復前にcleanup/importが走る競合を防ぐ。
+  Future<void> _initializeWithPendingRecovery() async {
+    try {
+      final loaded = await _store.load();
+      if (!mounted) return;
+      _updateState(() => _data = loaded);
+      await _initializePendingDeletion();
+      if (!mounted) return;
+      _updateState(() => _isLoading = false);
+      _scheduleStartupCleanup();
+      await _consumeInitialSharedUris();
+    } catch (error) {
+      if (!mounted) return;
+      _updateState(() {
+        _loadError = _readableError(error);
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _initializePendingDeletion() async {
