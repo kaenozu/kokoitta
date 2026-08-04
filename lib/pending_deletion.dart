@@ -298,6 +298,7 @@ class PendingDeletionManager {
       items: items,
     );
     final moved = <PendingDeletionItem>[];
+    var appDataCommitted = false;
     try {
       for (final item in items) {
         await moveFile(item.originalPath, item.trashPath);
@@ -307,22 +308,23 @@ class PendingDeletionManager {
       final next = data.copyWith(
         trips: <Trip>[...data.trips]..removeAt(tripIndex),
       );
-      try {
-        await saveData(next);
-      } catch (_) {
-        await _restoreMoved(moved);
-        await _save(operations);
-        rethrow;
-      }
+      await saveData(next);
+      appDataCommitted = true;
       operation.state = PendingDeletionState.pending;
       await _save(<PendingDeletionOperation>[...operations, operation]);
       return operation;
     } catch (_) {
-      if (moved.isNotEmpty) await _restoreMoved(moved);
-      if ((await loadOperations()).any(
-        (candidate) => candidate.operationId == operationId,
-      )) {
-        await _save(operations);
+      // AppData commit後は写真をoriginalへ戻さず、staged manifestも削除しない。
+      // pending保存失敗やプロセス中断は、次回起動時にAppDataとtrashを照合して
+      // stagedからpendingへ回復する。commit後に物理rollbackすると写真だけが
+      // originalへ孤立するため、rollbackはcommit前の失敗に限定する。
+      if (!appDataCommitted) {
+        if (moved.isNotEmpty) await _restoreMoved(moved);
+        if ((await loadOperations()).any(
+          (candidate) => candidate.operationId == operationId,
+        )) {
+          await _save(operations);
+        }
       }
       rethrow;
     }
