@@ -1,0 +1,143 @@
+name: Agent quota action-scope fix
+
+on:
+  push:
+    branches:
+      - agent/60-quota-action-scope-20260805
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/60-quota-action-scope-20260805
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          cache: true
+      - name: Apply focused source change
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('lib/home_view.dart')
+          source = path.read_text(encoding='utf-8')
+
+          old_state = '''  bool get _isDisabled =>
+              _isLoading || _coordinator.isBusy || _isImportBusy || _photoQuotaReached;
+          '''
+          new_state = '''  bool get _isDisabled =>
+              _isLoading || _coordinator.isBusy || _isImportBusy;
+
+            bool get _cannotAddPhotos =>
+                _isDisabled || _loadError != null || _photoQuotaReached;
+          '''
+          if source.count(old_state) != 1:
+              raise SystemExit('Unexpected _isDisabled source shape')
+          source = source.replace(old_state, new_state)
+
+          old_app_action = '''            onPressed: _isDisabled || _loadError != null || _photoQuotaReached
+                        ? null
+                        : _addPhotos,
+          '''
+          new_app_action = '''            onPressed: _cannotAddPhotos ? null : _addPhotos,
+          '''
+          if source.count(old_app_action) != 1:
+              raise SystemExit('Unexpected app-bar photo action shape')
+          source = source.replace(old_app_action, new_app_action)
+
+          photo_action = 'onPressed: _isDisabled ? null : _addPhotos,'
+          if source.count(photo_action) != 3:
+              raise SystemExit(
+                  f'Expected 3 direct photo actions, found {source.count(photo_action)}'
+              )
+          source = source.replace(
+              photo_action,
+              'onPressed: _cannotAddPhotos ? null : _addPhotos,',
+          )
+
+          old_trip_add = '''                onPressed: _isDisabled
+                              ? null
+                              : () {
+                                  Navigator.pop(sheetContext);
+                                  _addPhotos(tripId: trip.id);
+                                },
+          '''
+          new_trip_add = '''                onPressed: _cannotAddPhotos
+                              ? null
+                              : () {
+                                  Navigator.pop(sheetContext);
+                                  _addPhotos(tripId: trip.id);
+                                },
+          '''
+          if source.count(old_trip_add) != 1:
+              raise SystemExit('Unexpected trip photo action shape')
+          source = source.replace(old_trip_add, new_trip_add)
+
+          path.write_text(source, encoding='utf-8')
+
+          test = Path('test/quota_action_scope_test.dart')
+          test.write_text('''import 'dart:io';
+
+          import 'package:flutter_test/flutter_test.dart';
+
+          void main() {
+            test('photo quota only disables photo-add actions', () {
+              final source = File('lib/home_view.dart').readAsStringSync();
+
+              expect(
+                RegExp(
+                  r'bool get _isDisabled =>\\s*_isLoading \\|\\| '
+                  r'_coordinator\\.isBusy \\|\\| _isImportBusy;',
+                ).hasMatch(source),
+                isTrue,
+              );
+              expect(
+                RegExp(
+                  r'bool get _cannotAddPhotos =>\\s*_isDisabled \\|\\| '
+                  r'_loadError != null \\|\\| _photoQuotaReached;',
+                ).hasMatch(source),
+                isTrue,
+              );
+              expect(
+                source.contains('onPressed: _isDisabled ? null : _showBackupMenu'),
+                isTrue,
+              );
+              expect(source.contains('enabled: !_isDisabled'), isTrue);
+              expect(
+                source.contains('onPressed: _cannotAddPhotos ? null : _addPhotos'),
+                isTrue,
+              );
+            });
+          }
+          ''', encoding='utf-8')
+      - name: Verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          dart format lib/home_view.dart test/quota_action_scope_test.dart
+          flutter analyze
+          flutter test test/quota_action_scope_test.dart
+          flutter test
+          flutter build apk --debug
+          git diff --check
+      - name: Commit focused change
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add lib/home_view.dart test/quota_action_scope_test.dart
+          git commit -m 'fix: keep recovery actions available at photo quota'
+          git push origin HEAD:agent/60-quota-action-scope-20260805
