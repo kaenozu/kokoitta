@@ -206,6 +206,18 @@ extension _HomeBackupActions on _HomePageState {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// 表示中のSnackBarを閉じてから新しいSnackBarを表示する。
+  ///
+  /// 待機列に入ると直前のUndo SnackBarが消えるまで新しい表示が遅れるため、
+  /// Undo完了やUndo期限到達など、直前のフィードバックを即座に置き換えたい
+  /// 場面で使う。
+  void _showMessageNow(String message) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void _showError(String action, Object error) {
     _showMessage('$actionに失敗しました: ${_readableError(error)}');
   }

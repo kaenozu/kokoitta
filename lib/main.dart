@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'image_decode.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +15,8 @@ import 'backup_service.dart';
 import 'models.dart';
 import 'offline_japan_map.dart';
 import 'operation_coordinator.dart';
+import 'pending_deletion.dart';
+import 'pending_deletion_recovery.dart';
 import 'photo.dart';
 import 'import_progress.dart';
 import 'storage_cleanup.dart';
@@ -39,12 +43,14 @@ class KokoittaApp extends StatelessWidget {
     this.cleanupRunner,
     this.photoDeleteRunner,
     this.onImportEvent,
+    this.pendingDeletionBuilder,
   });
 
   /// 起動時cleanupの実行関数。テストで競合を制御するために注入可能。
   final CleanupRunner? cleanupRunner;
   final PhotoDeleteRunner? photoDeleteRunner;
   final void Function(ImportEvent event)? onImportEvent;
+  final PendingDeletionManager Function()? pendingDeletionBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -108,6 +114,7 @@ class KokoittaApp extends StatelessWidget {
         cleanupRunner: cleanupRunner,
         photoDeleteRunner: photoDeleteRunner,
         onImportEvent: onImportEvent,
+        pendingDeletionBuilder: pendingDeletionBuilder,
       ),
     );
   }
@@ -120,6 +127,7 @@ class HomePage extends StatefulWidget {
     this.cleanupRunner,
     this.photoDeleteRunner,
     this.onImportEvent,
+    this.pendingDeletionBuilder,
   });
 
   final OperationCoordinator? operationCoordinator;
@@ -128,6 +136,9 @@ class HomePage extends StatefulWidget {
   final CleanupRunner? cleanupRunner;
   final PhotoDeleteRunner? photoDeleteRunner;
   final void Function(ImportEvent event)? onImportEvent;
+
+  /// pending削除マネージャの生成関数。テストでUndo窓やストアを制御するために注入可能。
+  final PendingDeletionManager Function()? pendingDeletionBuilder;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -147,6 +158,7 @@ class _HomePageState extends State<HomePage> {
 
   late final OperationCoordinator _coordinator;
   late final CleanupRunner _cleanupRunner;
+  PendingDeletionManager? _pendingDeletion;
   late final Future<void> _initialization;
   AppData _data = AppData.empty();
   bool _isLoading = true;
@@ -157,7 +169,9 @@ class _HomePageState extends State<HomePage> {
   final Set<String> _terminalImportRequestIds = <String>{};
   ImportEvent? _importEvent;
   bool _isCleanupRunning = false;
+  bool _pendingDeletionAvailable = false;
   StreamSubscription<OperationStatus>? _statusSub;
+  final Map<String, Timer> _pendingUndoTimers = <String, Timer>{};
 
   /// 防御用に保持するrequestId集合の上限。Android側はrequestIdを毎回ユニークに
   /// 発行するため、ここに残るのは直近の終了・キャンセル履歴だけでよい。
@@ -169,19 +183,131 @@ class _HomePageState extends State<HomePage> {
     _coordinator = widget.operationCoordinator ?? OperationCoordinator();
     _cleanupRunner =
         widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
-    _initialization = _initialize();
+    // Release/Profileでは必ず回復対応の初期化を使う。旧経路はdebugで明示的に
+    // 比較検証する場合だけ有効化できる。
+    final useLegacyInitialization =
+        kDebugMode &&
+        const bool.fromEnvironment('KOKOITTA_USE_LEGACY_INITIALIZATION');
+    _initialization = useLegacyInitialization
+        ? _initialize()
+        : _initializeWithPendingRecovery();
     _shareChannel.setMethodCallHandler(_handleShareMethod);
     _statusSub = _coordinator.statusStream.listen((_) {
       if (mounted) _updateState(() {});
     });
   }
 
+  /// AppDataをロードした直後にpending削除を回復し、その後でcleanupと共有取込を
+  /// 開始する。空AppDataでの誤判定と、回復前にcleanup/importが走る競合を防ぐ。
+  Future<void> _initializeWithPendingRecovery() async {
+    try {
+      final loaded = await _store.load();
+      if (!mounted) return;
+      _updateState(() => _data = loaded);
+      final recoveryReady = await _initializePendingDeletion();
+      if (!mounted) return;
+      _updateState(() => _isLoading = false);
+      if (recoveryReady) {
+        _scheduleStartupCleanup();
+        await _consumeInitialSharedUris();
+      } else {
+        developer.log(
+          'startup cleanup/import skipped: pending deletion recovery unresolved',
+          name: 'kokoitta',
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      _updateState(() {
+        _loadError = _readableError(error);
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<bool> _initializePendingDeletion() =>
+      _buildPendingDeletion(requireManager: false);
+
+  /// pending削除マネージャを構築・回復し、成功時のみ [true] を返す。
+  ///
+  /// [requireManager] がfalseかつmanifestが無い通常起動ではpath_providerを呼ばず、
+  /// manager生成を最初の削除操作まで遅延する。
+  Future<bool> _buildPendingDeletion({bool requireManager = true}) async {
+    try {
+      final injected = widget.pendingDeletionBuilder;
+      if (injected != null) {
+        _pendingDeletion = injected();
+      } else {
+        final store = SharedPreferencesPendingDeletionStore();
+        if (!requireManager && await store.load() == null) {
+          _pendingDeletion = null;
+          _pendingDeletionAvailable = false;
+          return true;
+        }
+        final documents = await getApplicationDocumentsDirectory();
+        _pendingDeletion = PendingDeletionManager(
+          store: store,
+          trashRoot: '${documents.path}/pending-deletions',
+        );
+      }
+      final pending = await recoverPendingDeletions(
+        manager: _pendingDeletion!,
+        data: _data,
+      );
+      final recoveryBlocked = pending.any(
+        (operation) => switch (operation.state) {
+          PendingDeletionState.pending ||
+          PendingDeletionState.cleanupFailed => false,
+          PendingDeletionState.staged ||
+          PendingDeletionState.undoFailed ||
+          PendingDeletionState.undoCommitFailed ||
+          PendingDeletionState.undoRollbackFailed => true,
+        },
+      );
+      for (final operation in pending.where(
+        (operation) =>
+            operation.state == PendingDeletionState.pending ||
+            operation.state == PendingDeletionState.cleanupFailed,
+      )) {
+        _schedulePendingExpiry(operation);
+      }
+      _pendingDeletionAvailable = !recoveryBlocked;
+    } catch (error, stackTrace) {
+      _pendingDeletion = null;
+      _pendingDeletionAvailable = false;
+      developer.log(
+        'pending deletion initialization/recovery failed',
+        name: 'kokoitta',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    return _pendingDeletionAvailable;
+  }
+
   @override
   void dispose() {
+    for (final timer in _pendingUndoTimers.values) {
+      timer.cancel();
+    }
+    _pendingUndoTimers.clear();
     _statusSub?.cancel();
     _coordinator.dispose();
     _shareChannel.setMethodCallHandler(null);
     super.dispose();
+  }
+
+  void _schedulePendingExpiry(PendingDeletionOperation operation) {
+    _pendingUndoTimers.remove(operation.operationId)?.cancel();
+    final delay = operation.expiresAt.difference(DateTime.now().toUtc());
+    if (delay.isNegative || delay == Duration.zero) {
+      unawaited(_finalizePendingDeletion(operation.operationId));
+      return;
+    }
+    _pendingUndoTimers[operation.operationId] = Timer(delay, () {
+      _pendingUndoTimers.remove(operation.operationId);
+      unawaited(_finalizePendingDeletion(operation.operationId));
+    });
   }
 
   void _updateState(VoidCallback update) {

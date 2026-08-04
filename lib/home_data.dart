@@ -316,10 +316,7 @@ extension _HomeDataActions on _HomePageState {
                 failure.errorCode == 'cancel_cleanup_failed',
           )
           .firstOrNull;
-      final result = _sharedCancellationResult(
-        source,
-        failure: cleanupFailure,
-      );
+      final result = _sharedCancellationResult(source, failure: cleanupFailure);
       if (result.phase == ImportPhase.failed) {
         _showMessage('取り込みの取り消しに失敗しました。写真を確認してください');
       }
@@ -719,7 +716,7 @@ extension _HomeDataActions on _HomePageState {
     final confirmed = await _confirm(
       title: '写真も削除',
       message:
-          '「${trip.title}」と写真${trip.photos.length}枚を端末から削除します。この操作は元に戻せません。',
+          '「${trip.title}」と写真${trip.photos.length}枚を一時退避して削除します。30秒以内ならUndoできます。',
       confirmLabel: '削除する',
       destructive: true,
     );
@@ -739,19 +736,95 @@ extension _HomeDataActions on _HomePageState {
 
   Future<void> _deleteTripAndPhotos(String tripId) async {
     try {
+      // 初期化失敗時はここで再試行する。それでも失敗したら削除を開始しない。
+      var ready = _pendingDeletionAvailable;
+      if (!ready) ready = await _buildPendingDeletion();
+      final pendingDeletion = _pendingDeletion;
+      if (!ready || pendingDeletion == null) {
+        throw StateError('削除機能を初期化できませんでした');
+      }
       await _coordinator.runMutation(() async {
-        final trip = _data.trips.where((item) => item.id == tripId).firstOrNull;
-        if (trip == null) throw StateError('削除する旅行が見つかりません');
-        await _commitData(removeTrip(_data, tripId));
-        final failures = await _deleteFiles(trip.photos);
-        _showMessage(
-          failures == 0
-              ? '旅行と写真を削除しました'
-              : '旅行を削除しましたが、$failures枚のファイル削除に失敗しました',
+        final operation = await pendingDeletion.deleteTrip(
+          data: _data,
+          tripId: tripId,
+          saveData: _commitData,
         );
+        _schedulePendingExpiry(operation);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              // Undo可能な窓が切れるまで表示を保ち、期限到達で必ず消えるようにする。
+              duration: pendingDeletion.undoWindow,
+              content: const Text('旅行と写真を削除しました。30秒以内ならUndoできます'),
+              action: SnackBarAction(
+                label: 'Undo',
+                onPressed: () =>
+                    unawaited(_undoPendingDeletion(operation.operationId)),
+              ),
+            ),
+          );
       });
     } catch (error) {
       _showError('旅行の削除', error);
+    }
+  }
+
+  Future<void> _undoPendingDeletion(String operationId) async {
+    try {
+      await _coordinator.runMutation(() async {
+        final pendingDeletion = _pendingDeletion;
+        if (pendingDeletion == null) {
+          throw StateError('削除機能を初期化できませんでした');
+        }
+        await pendingDeletion.undo(
+          operationId: operationId,
+          data: _data,
+          saveData: _commitData,
+        );
+        _pendingUndoTimers.remove(operationId)?.cancel();
+        if (mounted) _showMessageNow('旅行と写真を元に戻しました');
+      });
+    } catch (error) {
+      if (mounted) _showError('削除の取り消し', error);
+    }
+  }
+
+  Future<void> _finalizePendingDeletion(String operationId) async {
+    try {
+      final pendingDeletion = _pendingDeletion;
+      if (pendingDeletion == null) {
+        developer.log(
+          'pending deletion finalize skipped: manager unavailable',
+          name: 'kokoitta',
+        );
+        return;
+      }
+      await _coordinator.runCleanup(() async {
+        final finalized = await pendingDeletion.finalizeExpired();
+        if (finalized.contains(operationId) && mounted) {
+          _showMessageNow('Undo期限が切れたため、写真を完全に削除しました');
+        }
+      });
+    } on StateError catch (error) {
+      // 起動時cleanup等が既にキューにある場合は、ユーザーへ誤エラーを表示せず
+      // 短時間後に再試行する。恒久的な失敗は次回起動のrecoverで再処理される。
+      if (error.message.contains('Cleanup already in progress')) {
+        developer.log(
+          'pending deletion finalize deferred: cleanup busy',
+          name: 'kokoitta',
+        );
+        _pendingUndoTimers[operationId]?.cancel();
+        _pendingUndoTimers[operationId] = Timer(const Duration(seconds: 2), () {
+          _pendingUndoTimers.remove(operationId);
+          unawaited(_finalizePendingDeletion(operationId));
+        });
+        return;
+      }
+      if (mounted) _showError('削除済み写真の回収', error);
+    } catch (error) {
+      if (mounted) _showError('削除済み写真の回収', error);
     }
   }
 
