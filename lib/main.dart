@@ -241,7 +241,7 @@ class _HomePageState extends State<HomePage> {
         final store = SharedPreferencesPendingDeletionStore();
         if (!requireManager && await store.load() == null) {
           _pendingDeletion = null;
-          _pendingDeletionAvailable = true;
+          _pendingDeletionAvailable = false;
           return true;
         }
         final documents = await getApplicationDocumentsDirectory();
