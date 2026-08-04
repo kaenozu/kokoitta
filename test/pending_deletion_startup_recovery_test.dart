@@ -158,7 +158,7 @@ Future<_RecoveryFixture> _createFixture({bool createOriginal = false}) async {
     operationId: 'delete-trip-1',
     trip: trip,
     createdAt: DateTime.utc(2026, 8, 4, 3),
-    expiresAt: DateTime.utc(2026, 8, 4, 5),
+    expiresAt: DateTime.utc(2100, 1, 1),
     state: PendingDeletionState.staged,
     items: <PendingDeletionItem>[
       PendingDeletionItem(
