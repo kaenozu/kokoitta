@@ -182,7 +182,14 @@ class _HomePageState extends State<HomePage> {
     _coordinator = widget.operationCoordinator ?? OperationCoordinator();
     _cleanupRunner =
         widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
-    _initialization = _initializeWithPendingRecovery();
+    // Release/Profileでは必ず回復対応の初期化を使う。旧経路はdebugで明示的に
+    //比較検証する場合だけ有効化できる。
+    final useLegacyInitialization =
+        kDebugMode &&
+        const bool.fromEnvironment('KOKOITTA_USE_LEGACY_INITIALIZATION');
+    _initialization = useLegacyInitialization
+        ? _initialize()
+        : _initializeWithPendingRecovery();
     _shareChannel.setMethodCallHandler(_handleShareMethod);
     _statusSub = _coordinator.statusStream.listen((_) {
       if (mounted) _updateState(() {});
