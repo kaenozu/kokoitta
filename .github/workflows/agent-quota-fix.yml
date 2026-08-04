@@ -1,6 +1,7 @@
 name: Agent quota action-scope fix
 
 on:
+  pull_request:
   push:
     branches:
       - agent/60-quota-action-scope-20260805
@@ -28,33 +29,34 @@ jobs:
       - name: Apply focused source change
         shell: python
         run: |
+          import re
           from pathlib import Path
 
           path = Path('lib/home_view.dart')
           source = path.read_text(encoding='utf-8')
 
-          old_state = '''  bool get _isDisabled =>
-              _isLoading || _coordinator.isBusy || _isImportBusy || _photoQuotaReached;
-          '''
-          new_state = '''  bool get _isDisabled =>
-              _isLoading || _coordinator.isBusy || _isImportBusy;
-
-            bool get _cannotAddPhotos =>
-                _isDisabled || _loadError != null || _photoQuotaReached;
-          '''
-          if source.count(old_state) != 1:
+          source, count = re.subn(
+              r"  bool get _isDisabled =>\n\s+_isLoading \|\| "
+              r"_coordinator\.isBusy \|\| _isImportBusy \|\| _photoQuotaReached;",
+              "  bool get _isDisabled =>\n"
+              "      _isLoading || _coordinator.isBusy || _isImportBusy;\n\n"
+              "  bool get _cannotAddPhotos =>\n"
+              "      _isDisabled || _loadError != null || _photoQuotaReached;",
+              source,
+              count=1,
+          )
+          if count != 1:
               raise SystemExit('Unexpected _isDisabled source shape')
-          source = source.replace(old_state, new_state)
 
-          old_app_action = '''            onPressed: _isDisabled || _loadError != null || _photoQuotaReached
-                        ? null
-                        : _addPhotos,
-          '''
-          new_app_action = '''            onPressed: _cannotAddPhotos ? null : _addPhotos,
-          '''
-          if source.count(old_app_action) != 1:
+          source, count = re.subn(
+              r"onPressed: _isDisabled \|\| _loadError != null \|\| "
+              r"_photoQuotaReached\s*\? null\s*: _addPhotos,",
+              "onPressed: _cannotAddPhotos ? null : _addPhotos,",
+              source,
+              count=1,
+          )
+          if count != 1:
               raise SystemExit('Unexpected app-bar photo action shape')
-          source = source.replace(old_app_action, new_app_action)
 
           photo_action = 'onPressed: _isDisabled ? null : _addPhotos,'
           if source.count(photo_action) != 3:
@@ -66,23 +68,21 @@ jobs:
               'onPressed: _cannotAddPhotos ? null : _addPhotos,',
           )
 
-          old_trip_add = '''                onPressed: _isDisabled
-                              ? null
-                              : () {
-                                  Navigator.pop(sheetContext);
-                                  _addPhotos(tripId: trip.id);
-                                },
-          '''
-          new_trip_add = '''                onPressed: _cannotAddPhotos
-                              ? null
-                              : () {
-                                  Navigator.pop(sheetContext);
-                                  _addPhotos(tripId: trip.id);
-                                },
-          '''
-          if source.count(old_trip_add) != 1:
+          source, count = re.subn(
+              r"onPressed: _isDisabled\s*\? null\s*: \(\) \{\s*"
+              r"Navigator\.pop\(sheetContext\);\s*"
+              r"_addPhotos\(tripId: trip\.id\);\s*\},",
+              "onPressed: _cannotAddPhotos\n"
+              "                    ? null\n"
+              "                    : () {\n"
+              "                        Navigator.pop(sheetContext);\n"
+              "                        _addPhotos(tripId: trip.id);\n"
+              "                      },",
+              source,
+              count=1,
+          )
+          if count != 1:
               raise SystemExit('Unexpected trip photo action shape')
-          source = source.replace(old_trip_add, new_trip_add)
 
           path.write_text(source, encoding='utf-8')
 
