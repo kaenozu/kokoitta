@@ -11,6 +11,7 @@ enum PendingDeletionState {
   pending,
   undoFailed,
   undoCommitFailed,
+  undoRollbackFailed,
   cleanupFailed,
 }
 
@@ -337,7 +338,14 @@ class PendingDeletionManager {
       (item) => item.operationId == operationId,
       orElse: () => throw StateError('pending削除が見つかりません'),
     );
-    if (!now().isBefore(operation.expiresAt)) throw StateError('Undo期限が切れています');
+    if (!now().isBefore(operation.expiresAt)) {
+      throw StateError('Undo期限が切れています');
+    }
+    // P1: 旅行IDの重複は物理復元より先に検査する。重複時はoriginal/trashを
+    // 不変に保ったままmanifestを維持し、成功扱いにしない（再試行可能なまま）。
+    if (data.trips.any((trip) => trip.id == operation.trip.id)) {
+      throw StateError('復元対象の旅行が既に存在します');
+    }
     final restored = <PendingDeletionItem>[];
     try {
       for (final item in operation.items) {
@@ -358,9 +366,6 @@ class PendingDeletionManager {
       rethrow;
     }
     final trips = <Trip>[...data.trips];
-    if (trips.any((trip) => trip.id == operation.trip.id)) {
-      throw StateError('復元対象の旅行が既に存在します');
-    }
     final insertAt = operation.items.first.tripIndex.clamp(0, trips.length);
     final restoredPhotos = [...operation.items]
       ..sort((a, b) => a.photoIndex.compareTo(b.photoIndex));
@@ -374,13 +379,50 @@ class PendingDeletionManager {
     );
     try {
       await saveData(data.copyWith(trips: trips));
-      operations.remove(operation);
+    } catch (error) {
+      // P1: AppData保存失敗時は復元済みファイルを逆順でtrashへ戻す。
+      final rollbackFailures = await _restageRestored(restored);
+      if (rollbackFailures.isEmpty) {
+        // 全てtrashへ戻せた: stagedへ戻し、再試行可能なpendingを維持して
+        // 元例外を再throwする。
+        operation.state = PendingDeletionState.pending;
+        await _save(operations);
+        rethrow;
+      }
+      // 一部戻せなかった: item毎の実際のphysical stateを保存し、rollback不完全
+      // をmanifestで保持する。cleanup/finalizeはこのoperationを削除しない。
+      operation.state = PendingDeletionState.undoRollbackFailed;
       await _save(operations);
-    } catch (_) {
-      operation.state = PendingDeletionState.undoCommitFailed;
-      await _save(operations);
-      rethrow;
+      throw StateError(
+        'Undoの保存に失敗しました（original: $error）。'
+        'rollbackで${rollbackFailures.length}件失敗しました: $rollbackFailures',
+      );
     }
+    operations.remove(operation);
+    await _save(operations);
+  }
+
+  /// 復元済み（restored）itemのファイルを逆順でtrashへ戻す。
+  ///
+  /// item毎に実際に戻せたかを [PendingDeletionPhysicalState] へ反映し、失敗した
+  /// itemを成功扱いしない。戻せなかった失敗情報の一覧を返す。
+  Future<List<Object>> _restageRestored(
+    Iterable<PendingDeletionItem> restored,
+  ) async {
+    final failures = <Object>[];
+    for (final item in restored.toList().reversed) {
+      try {
+        if (!File(item.originalPath).existsSync()) {
+          failures.add(StateError('復元元のファイルが見つかりません: ${item.originalPath}'));
+          continue;
+        }
+        await moveFile(item.originalPath, item.trashPath);
+        item.physicalState = PendingDeletionPhysicalState.staged;
+      } catch (error) {
+        failures.add(error);
+      }
+    }
+    return failures;
   }
 
   Future<List<String>> finalizeExpired({DateTime? at}) async {
@@ -388,15 +430,23 @@ class PendingDeletionManager {
     final finalized = <String>[];
     for (final operation in [...operations]) {
       if ((at ?? now()).isBefore(operation.expiresAt)) continue;
+      // 復旧が必要なoperation（undo失敗・rollback不完全・staged）は自動で
+      // 確定削除せずmanifestを保持する。
+      if (!_isExpiredFinalizable(operation)) continue;
       var failed = false;
       for (final item in operation.items) {
         if (item.physicalState == PendingDeletionPhysicalState.deleted) {
           continue;
         }
+        if (item.physicalState == PendingDeletionPhysicalState.restored) {
+          // 不完全Undoの残骸であり、trash欠損をdeleted扱いにしない。
+          // このoperationはそのままmanifestへ保持する。
+          failed = true;
+          break;
+        }
         if (!File(item.trashPath).existsSync()) {
-          // 既に物理削除済み（二重finalize・外部削除）は成功として扱う。
-          // 対象外だとcleanupFailedへ固着してmanifestが残り、再起動のたびに
-          // 回収エラーが再発するため。
+          // staged+trash欠損: 既に物理削除済み（二重finalize・外部削除）として
+          // 冪等にdeleted扱いする。上記のrestored+欠損とは区別している。
           item.physicalState = PendingDeletionPhysicalState.deleted;
           continue;
         }
@@ -418,20 +468,50 @@ class PendingDeletionManager {
     return finalized;
   }
 
+  /// [finalizeExpired] で自動確定削除してよいoperationかを判定する。
+  ///
+  /// pending（通常の遅延削除）とcleanupFailed（再試行）だけを対象にし、
+  /// staged（recoverの責務）やundo失敗・rollback不完全は破壊的な自動確定から
+  /// 除外してmanifestを保持する。
+  bool _isExpiredFinalizable(PendingDeletionOperation operation) {
+    return switch (operation.state) {
+      PendingDeletionState.pending ||
+      PendingDeletionState.cleanupFailed => true,
+      PendingDeletionState.staged ||
+      PendingDeletionState.undoFailed ||
+      PendingDeletionState.undoCommitFailed ||
+      PendingDeletionState.undoRollbackFailed => false,
+    };
+  }
+
   Future<void> recover() async {
     final operations = await loadOperations();
     for (final operation in [...operations]) {
-      if (operation.state == PendingDeletionState.staged) {
-        await _restoreMoved(
-          operation.items.where(
-            (item) => item.physicalState == PendingDeletionPhysicalState.staged,
-          ),
-        );
-        operations.remove(operation);
-        await _save(operations);
-      }
+      if (operation.state != PendingDeletionState.staged) continue;
+      // staged操作でも、originalとの乖離やtrash欠損など曖昧な状態は
+      // fail-closedでmanifestを保持し、自動復元・削除を行わない。
+      if (!_canSafelyRestoreStaged(operation)) continue;
+      await _restoreMoved(operation.items);
+      operations.remove(operation);
+      await _save(operations);
     }
+    // 期限切れの通常pendingだけを最終確定し、復旧必要operationは保持する。
     await finalizeExpired();
+  }
+
+  /// staged操作を安全に自動復元できるかを確認する。
+  ///
+  /// 全itemがstagedで、originalが存在せずtrashが存在する場合のみ許可する。
+  /// originalとtrashの両方存在・両方欠損・一部restoredは安全側で処理を止める。
+  bool _canSafelyRestoreStaged(PendingDeletionOperation operation) {
+    for (final item in operation.items) {
+      if (item.physicalState != PendingDeletionPhysicalState.staged) {
+        return false;
+      }
+      if (File(item.originalPath).existsSync()) return false;
+      if (!File(item.trashPath).existsSync()) return false;
+    }
+    return true;
   }
 
   Future<void> _restoreMoved(Iterable<PendingDeletionItem> items) async {
