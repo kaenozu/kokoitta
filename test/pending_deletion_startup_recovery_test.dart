@@ -35,6 +35,7 @@ void main() {
 
     await tester.runAsync(() async {
       await _waitForState(
+        tester,
         fixture.manager,
         PendingDeletionState.pending,
       );
@@ -69,7 +70,7 @@ void main() {
     );
 
     await tester.runAsync(() async {
-      await _waitForNoOperations(fixture.manager);
+      await _waitForNoOperations(tester, fixture.manager);
     });
 
     expect(await fixture.manager.loadOperations(), isEmpty);
@@ -101,7 +102,7 @@ void main() {
     );
 
     await tester.runAsync(() async {
-      await _waitForNoOperations(fixture.manager);
+      await _waitForNoOperations(tester, fixture.manager);
     });
 
     expect(await fixture.manager.loadOperations(), isEmpty);
@@ -137,11 +138,13 @@ void main() {
 }
 
 Future<void> _waitForState(
+  WidgetTester tester,
   PendingDeletionManager manager,
   PendingDeletionState expected,
 ) async {
   final deadline = DateTime.now().add(const Duration(seconds: 10));
   while (DateTime.now().isBefore(deadline)) {
+    await tester.pump();
     final operations = await manager.loadOperations();
     if (operations.length == 1 && operations.single.state == expected) return;
     await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -149,9 +152,13 @@ Future<void> _waitForState(
   fail('pending deletionが${expected.name}へ遷移しませんでした');
 }
 
-Future<void> _waitForNoOperations(PendingDeletionManager manager) async {
+Future<void> _waitForNoOperations(
+  WidgetTester tester,
+  PendingDeletionManager manager,
+) async {
   final deadline = DateTime.now().add(const Duration(seconds: 10));
   while (DateTime.now().isBefore(deadline)) {
+    await tester.pump();
     if ((await manager.loadOperations()).isEmpty) return;
     await Future<void>.delayed(const Duration(milliseconds: 20));
   }
