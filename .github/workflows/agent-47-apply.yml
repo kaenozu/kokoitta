@@ -1,0 +1,466 @@
+name: Agent Issue 47 Apply
+
+on:
+  push:
+    branches:
+      - 'agent/47-shared-image-format-validation-20260805'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: ${{ !contains(github.event.head_commit.message, '[agent-applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: agent/47-shared-image-format-validation-20260805
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+
+      - name: Apply implementation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('android/app/src/main/kotlin/com/kaenozu/kokoitta_app/MainActivity.kt')
+          text = main.read_text(encoding='utf-8')
+          old = '''        val mimeType = resolver.getType(uri)
+        val displayName = resolveDisplayName(resolver, uri)
+        val extension = resolveExtension(mimeType, displayName)
+            ?: return UriCopyResult(
+                errorCode = "unsupported_format",
+                reason = "未対応の形式です: ${mimeType ?: "不明"}",
+            )
+        if (remainingRequestBytes <= 0) {
+'''
+          new = '''        val mimeType = resolver.getType(uri)
+        val displayName = resolveDisplayName(resolver, uri)
+        if (remainingRequestBytes <= 0) {
+'''
+          if old not in text:
+              raise SystemExit('pre-copy format block not found')
+          text = text.replace(old, new, 1)
+          text = text.replace('File.createTempFile("share_${session.requestId}_$index-", ".$extension", cacheDir)', 'File.createTempFile("share_${session.requestId}_$index-", ".part", cacheDir)', 1)
+          old = '''                StopReason.COMPLETED -> UriCopyResult(
+                    file = tempFile,
+                    displayName = displayName,
+                    mimeType = mimeType,
+                )
+'''
+          new = '''                StopReason.COMPLETED -> {
+                    val validation = SharedImageFormatValidator.validate(
+                        file = tempFile,
+                        declaredMimeType = mimeType,
+                        displayName = displayName,
+                    )
+                    val detectedFormat = validation.format
+                    if (validation.errorCode != null || detectedFormat == null) {
+                        failedTemp(
+                            tempFile,
+                            validation.errorCode ?: "unsupported_format",
+                            validation.reason ?: "未対応または破損した画像です",
+                        )
+                    } else {
+                        val finalized = finalizeTempFile(tempFile, detectedFormat.extension, session)
+                        UriCopyResult(
+                            file = finalized,
+                            displayName = displayName,
+                            mimeType = detectedFormat.canonicalMimeType,
+                        )
+                    }
+                }
+'''
+          if old not in text:
+              raise SystemExit('completed copy block not found')
+          text = text.replace(old, new, 1)
+          marker = '''    private fun failedTemp(file: File, code: String, reason: String): UriCopyResult {
+'''
+          helper = '''    private fun finalizeTempFile(
+        temporaryFile: File,
+        extension: String,
+        session: RequestSession,
+    ): File {
+        val finalFile = File(
+            temporaryFile.parentFile,
+            "${temporaryFile.name.substringBeforeLast('.')}.$extension",
+        )
+        if (!temporaryFile.renameTo(finalFile)) {
+            throw IOException("一時画像の形式確定に失敗しました")
+        }
+        session.tempFiles.remove(temporaryFile)
+        session.tempFiles += finalFile
+        return finalFile
+    }
+
+'''
+          if helper.strip() not in text:
+              if marker not in text:
+                  raise SystemExit('failedTemp marker not found')
+              text = text.replace(marker, helper + marker, 1)
+          start = text.index('    internal fun resolveExtension(')
+          end = text.index('    private fun resolveDisplayName', start)
+          replacement = '''    internal fun resolveExtension(mimeType: String?, displayName: String?): String? =
+        SharedImageFormatValidator.claimedFormat(mimeType, displayName)?.extension
+
+'''
+          text = text[:start] + replacement + text[end:]
+          main.write_text(text, encoding='utf-8')
+
+          Path('android/app/src/main/kotlin/com/kaenozu/kokoitta_app/SharedImageFormatValidator.kt').write_text(r'''package com.kaenozu.kokoitta_app
+
+import android.graphics.BitmapFactory
+import android.os.Build
+import java.io.File
+import java.io.FileInputStream
+
+internal enum class SharedImageFormat(
+    val extension: String,
+    val canonicalMimeType: String,
+    val mimeTypes: Set<String>,
+    val extensions: Set<String>,
+) {
+    JPEG("jpg", "image/jpeg", setOf("image/jpeg", "image/jpg"), setOf("jpg", "jpeg")),
+    PNG("png", "image/png", setOf("image/png"), setOf("png")),
+    WEBP("webp", "image/webp", setOf("image/webp"), setOf("webp")),
+    GIF("gif", "image/gif", setOf("image/gif"), setOf("gif")),
+    BMP("bmp", "image/bmp", setOf("image/bmp", "image/x-ms-bmp"), setOf("bmp")),
+    HEIC(
+        "heic",
+        "image/heic",
+        setOf("image/heic", "image/heif"),
+        setOf("heic", "heif"),
+    ),
+}
+
+internal data class SharedImageValidationResult(
+    val format: SharedImageFormat? = null,
+    val errorCode: String? = null,
+    val reason: String? = null,
+)
+
+internal object SharedImageFormatValidator {
+    private val unsupportedImageExtensions = setOf(
+        "svg", "svgz", "tif", "tiff", "ico", "wbmp", "avif",
+    )
+
+    private val heifBrands = setOf(
+        "heic", "heix", "hevc", "hevx", "heim", "heis", "heif", "mif1", "msf1",
+    )
+
+    fun claimedFormat(mimeType: String?, displayName: String?): SharedImageFormat? {
+        val mime = mimeType?.trim()?.lowercase()
+        val fromMime = SharedImageFormat.entries.firstOrNull { mime in it.mimeTypes }
+        if (fromMime != null) return fromMime
+        return formatFromExtension(displayName)
+    }
+
+    fun validate(
+        file: File,
+        declaredMimeType: String?,
+        displayName: String?,
+    ): SharedImageValidationResult = validate(
+        file = file,
+        declaredMimeType = declaredMimeType,
+        displayName = displayName,
+        canDecode = ::canPlatformDecode,
+    )
+
+    internal fun validate(
+        file: File,
+        declaredMimeType: String?,
+        displayName: String?,
+        canDecode: (File, SharedImageFormat) -> Boolean,
+    ): SharedImageValidationResult {
+        val mime = declaredMimeType?.trim()?.lowercase()
+        if (mime != null && mime.startsWith("image/") &&
+            SharedImageFormat.entries.none { mime in it.mimeTypes }
+        ) {
+            return SharedImageValidationResult(
+                errorCode = "unsupported_format",
+                reason = "未対応の画像MIMEです: $mime",
+            )
+        }
+
+        val extension = extensionOf(displayName)
+        if (extension in unsupportedImageExtensions) {
+            return SharedImageValidationResult(
+                errorCode = "unsupported_format",
+                reason = "未対応の画像拡張子です: .$extension",
+            )
+        }
+
+        val detected = detect(file)
+            ?: return SharedImageValidationResult(
+                errorCode = "invalid_image",
+                reason = "画像ヘッダーを確認できませんでした",
+            )
+
+        val mimeClaim = SharedImageFormat.entries.firstOrNull { mime in it.mimeTypes }
+        if (mimeClaim != null && mimeClaim != detected) {
+            return SharedImageValidationResult(
+                errorCode = "format_mismatch",
+                reason = "宣言されたMIMEと実画像形式が一致しません",
+            )
+        }
+
+        val extensionClaim = formatFromExtension(displayName)
+        if (extensionClaim != null && extensionClaim != detected) {
+            return SharedImageValidationResult(
+                errorCode = "format_mismatch",
+                reason = "ファイル名の拡張子と実画像形式が一致しません",
+            )
+        }
+
+        if (!canDecode(file, detected)) {
+            return SharedImageValidationResult(
+                errorCode = "decode_failed",
+                reason = "この端末では画像を安全にデコードできません",
+            )
+        }
+        return SharedImageValidationResult(format = detected)
+    }
+
+    internal fun detect(file: File): SharedImageFormat? {
+        val header = ByteArray(32)
+        val length = try {
+            FileInputStream(file).use { it.read(header) }
+        } catch (_: Exception) {
+            return null
+        }
+        if (length < 2) return null
+        if (length >= 3 && u(header[0]) == 0xff && u(header[1]) == 0xd8 && u(header[2]) == 0xff) {
+            return SharedImageFormat.JPEG
+        }
+        if (length >= 8 && header.copyOfRange(0, 8).contentEquals(
+                byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+            )
+        ) {
+            return SharedImageFormat.PNG
+        }
+        if (length >= 6) {
+            val gif = ascii(header, 0, 6)
+            if (gif == "GIF87a" || gif == "GIF89a") return SharedImageFormat.GIF
+        }
+        if (length >= 12 && ascii(header, 0, 4) == "RIFF" && ascii(header, 8, 4) == "WEBP") {
+            return SharedImageFormat.WEBP
+        }
+        if (header[0] == 'B'.code.toByte() && header[1] == 'M'.code.toByte()) {
+            return SharedImageFormat.BMP
+        }
+        if (length >= 12 && ascii(header, 4, 4) == "ftyp" && ascii(header, 8, 4) in heifBrands) {
+            return SharedImageFormat.HEIC
+        }
+        return null
+    }
+
+    private fun canPlatformDecode(file: File, format: SharedImageFormat): Boolean {
+        if (format == SharedImageFormat.HEIC && Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            return false
+        }
+        return try {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, options)
+            options.outWidth > 0 && options.outHeight > 0
+        } catch (_: RuntimeException) {
+            false
+        } catch (_: OutOfMemoryError) {
+            false
+        }
+    }
+
+    private fun formatFromExtension(displayName: String?): SharedImageFormat? {
+        val extension = extensionOf(displayName) ?: return null
+        return SharedImageFormat.entries.firstOrNull { extension in it.extensions }
+    }
+
+    private fun extensionOf(displayName: String?): String? {
+        val name = displayName?.trim() ?: return null
+        val dot = name.lastIndexOf('.')
+        if (dot < 0 || dot == name.lastIndex) return null
+        return name.substring(dot + 1).lowercase()
+    }
+
+    private fun ascii(bytes: ByteArray, offset: Int, length: Int): String =
+        bytes.copyOfRange(offset, offset + length).toString(Charsets.US_ASCII)
+
+    private fun u(value: Byte): Int = value.toInt() and 0xff
+}
+''', encoding='utf-8')
+
+          Path('android/app/src/test/java/com/kaenozu/kokoitta_app/SharedImageFormatValidatorTest.kt').write_text(r'''package com.kaenozu.kokoitta_app
+
+import java.io.File
+import java.nio.file.Files
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class SharedImageFormatValidatorTest {
+    @Test
+    fun detectsSupportedHeaders() {
+        assertDetected(SharedImageFormat.JPEG, byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 0x00))
+        assertDetected(SharedImageFormat.PNG, byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))
+        assertDetected(SharedImageFormat.GIF, "GIF89a".toByteArray())
+        assertDetected(SharedImageFormat.WEBP, "RIFF0000WEBP".toByteArray())
+        assertDetected(SharedImageFormat.BMP, "BM".toByteArray())
+        assertDetected(SharedImageFormat.HEIC, byteArrayOf(0, 0, 0, 24) + "ftypheic".toByteArray())
+    }
+
+    @Test
+    fun rejectsFakeJpegAndDecodeFailure() {
+        val nonImage = tempFile("not-an-image".toByteArray())
+        val fake = SharedImageFormatValidator.validate(
+            nonImage,
+            "image/jpeg",
+            "photo.jpg",
+        ) { _, _ -> true }
+        assertEquals("invalid_image", fake.errorCode)
+
+        val corruptJpeg = tempFile(byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 0x00))
+        val corrupt = SharedImageFormatValidator.validate(
+            corruptJpeg,
+            "image/jpeg",
+            "photo.jpg",
+        ) { _, _ -> false }
+        assertEquals("decode_failed", corrupt.errorCode)
+    }
+
+    @Test
+    fun rejectsMimeAndExtensionMismatch() {
+        val png = tempFile(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))
+        val mimeMismatch = SharedImageFormatValidator.validate(
+            png,
+            "image/jpeg",
+            "photo.png",
+        ) { _, _ -> true }
+        assertEquals("format_mismatch", mimeMismatch.errorCode)
+
+        val extensionMismatch = SharedImageFormatValidator.validate(
+            png,
+            null,
+            "photo.jpg",
+        ) { _, _ -> true }
+        assertEquals("format_mismatch", extensionMismatch.errorCode)
+    }
+
+    @Test
+    fun acceptsHeaderWhenMimeAndExtensionAreMissing() {
+        val png = tempFile(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))
+        val result = SharedImageFormatValidator.validate(png, null, null) { _, _ -> true }
+        assertEquals(SharedImageFormat.PNG, result.format)
+        assertNull(result.errorCode)
+    }
+
+    @Test
+    fun rejectsExplicitlyUnsupportedImageTypes() {
+        val payload = tempFile("<svg/>".toByteArray())
+        for ((mime, name) in listOf(
+            "image/svg+xml" to "photo.svg",
+            "image/tiff" to "photo.tiff",
+            "image/x-icon" to "photo.ico",
+            "image/vnd.wap.wbmp" to "photo.wbmp",
+        )) {
+            val result = SharedImageFormatValidator.validate(payload, mime, name) { _, _ -> true }
+            assertEquals("unsupported_format", result.errorCode)
+        }
+    }
+
+    @Test
+    fun claimContractOnlyIncludesSupportedFormats() {
+        assertEquals(SharedImageFormat.JPEG, SharedImageFormatValidator.claimedFormat("image/jpeg", "x.bin"))
+        assertEquals(SharedImageFormat.PNG, SharedImageFormatValidator.claimedFormat(null, "x.PNG"))
+        assertNull(SharedImageFormatValidator.claimedFormat("image/svg+xml", "x.svg"))
+        assertNull(SharedImageFormatValidator.claimedFormat(null, "x.tiff"))
+    }
+
+    private fun assertDetected(expected: SharedImageFormat, bytes: ByteArray) {
+        assertEquals(expected, SharedImageFormatValidator.detect(tempFile(bytes)))
+    }
+
+    private fun tempFile(bytes: ByteArray): File {
+        val file = Files.createTempFile("shared-image-format", ".bin").toFile()
+        file.deleteOnExit()
+        file.writeBytes(bytes)
+        assertTrue(file.exists())
+        return file
+    }
+}
+''', encoding='utf-8')
+
+          contract = Path('android/app/src/test/java/com/kaenozu/kokoitta_app/MainActivityContractTest.kt')
+          text = contract.read_text(encoding='utf-8')
+          insertion = '''
+    @Test
+    fun productionExtensionContractRejectsUnsupportedFormats() {
+        val activity = MainActivity()
+        assertEquals("jpg", activity.resolveExtension("image/jpeg", "photo.bin"))
+        assertEquals("png", activity.resolveExtension(null, "photo.PNG"))
+        assertNull(activity.resolveExtension("image/svg+xml", "photo.svg"))
+        assertNull(activity.resolveExtension("image/tiff", "photo.tiff"))
+        assertNull(activity.resolveExtension("image/x-icon", "photo.ico"))
+    }
+'''
+          if 'productionExtensionContractRejectsUnsupportedFormats' not in text:
+              text = text.rstrip().removesuffix('}') + insertion + '}\n'
+              contract.write_text(text, encoding='utf-8')
+
+          Path('docs/supported-image-formats.md').write_text('''# Shared image format contract
+
+Android share import accepts only formats that are both identified from file bytes and decodable by the current Android platform without allocating the full bitmap.
+
+| Format | MIME aliases | Extensions | Header check |
+| --- | --- | --- | --- |
+| JPEG | `image/jpeg`, `image/jpg` | `.jpg`, `.jpeg` | `FF D8 FF` |
+| PNG | `image/png` | `.png` | PNG 8-byte signature |
+| WebP | `image/webp` | `.webp` | RIFF container with `WEBP` brand |
+| GIF | `image/gif` | `.gif` | `GIF87a` or `GIF89a` |
+| BMP | `image/bmp`, `image/x-ms-bmp` | `.bmp` | `BM` |
+| HEIC/HEIF | `image/heic`, `image/heif` | `.heic`, `.heif` | ISO-BMFF `ftyp` with a supported HEIF brand; Android 9+ |
+
+SVG, TIFF, ICO, WBMP and AVIF are rejected. They previously passed MIME/extension checks even though the app had no guaranteed rendering contract for them.
+
+The actual header is authoritative. A supported declared MIME or supported filename extension must agree with the detected bytes. A missing MIME and extension is allowed only when the bytes identify a supported format and Android can read valid image bounds. Corrupt files, fake MIME values and platform decode failures are reported per file without aborting other shared images.
+
+Full-screen display remains bounded separately by the 4096-pixel decode ceiling. Original files are copied into app-private storage and are never overwritten in place.
+''', encoding='utf-8')
+
+          Path('.github/workflows/agent-47-apply.yml').unlink()
+          PY
+
+      - name: Verify changes
+        shell: bash
+        run: |
+          flutter pub get
+          git diff --exit-code -- pubspec.lock
+          ./android/gradlew -p android :app:testDebugUnitTest --no-daemon
+          flutter analyze
+          flutter test
+          flutter build apk --debug
+          git diff --check
+
+      - name: Commit verified changes
+        shell: bash
+        run: |
+          git config user.name 'ChatGPT Agent'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: validate shared image file formats [agent-applied]'
+          git push origin HEAD:agent/47-shared-image-format-validation-20260805
