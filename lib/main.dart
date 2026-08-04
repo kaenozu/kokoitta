@@ -53,26 +53,40 @@ Future<List<PendingDeletionOperation>> _recoverPendingDeletions({
 
   for (final operation in [...operations]) {
     if (operation.state != PendingDeletionState.staged) continue;
-    if (!_isUnambiguousStaged(operation)) continue;
 
     final tripStillExists = data.trips.any(
       (trip) => trip.id == operation.trip.id,
     );
     if (!tripStillExists) {
+      if (!_canPromoteStagedToPending(operation)) continue;
       operation.state = PendingDeletionState.pending;
       await _savePendingOperations(manager, operations);
       continue;
     }
 
+    if (!_canResumeStagedRestore(operation)) continue;
     try {
       for (final item in operation.items.reversed) {
+        final originalExists = File(item.originalPath).existsSync();
+        final trashExists = File(item.trashPath).existsSync();
+
+        if (item.physicalState == PendingDeletionPhysicalState.restored) {
+          continue;
+        }
+        if (originalExists && !trashExists) {
+          // rename完了後・manifest保存前に中断した境界を回収する。
+          item.physicalState = PendingDeletionPhysicalState.restored;
+          await _savePendingOperations(manager, operations);
+          continue;
+        }
+
         await manager.moveFile(item.trashPath, item.originalPath);
         item.physicalState = PendingDeletionPhysicalState.restored;
         // 複数写真の途中で停止しても復元済みitemをmanifestに保持する。
         await _savePendingOperations(manager, operations);
       }
     } catch (_) {
-      operation.state = PendingDeletionState.undoRollbackFailed;
+      // 成功済みitemのphysicalStateを保持したまま、次回起動で再開可能にする。
       await _savePendingOperations(manager, operations);
       rethrow;
     }
@@ -85,13 +99,34 @@ Future<List<PendingDeletionOperation>> _recoverPendingDeletions({
   return manager.loadOperations();
 }
 
-bool _isUnambiguousStaged(PendingDeletionOperation operation) {
+bool _canPromoteStagedToPending(PendingDeletionOperation operation) {
   for (final item in operation.items) {
     if (item.physicalState != PendingDeletionPhysicalState.staged) {
       return false;
     }
     if (File(item.originalPath).existsSync()) return false;
     if (!File(item.trashPath).existsSync()) return false;
+  }
+  return true;
+}
+
+bool _canResumeStagedRestore(PendingDeletionOperation operation) {
+  for (final item in operation.items) {
+    final originalExists = File(item.originalPath).existsSync();
+    final trashExists = File(item.trashPath).existsSync();
+    switch (item.physicalState) {
+      case PendingDeletionPhysicalState.staged:
+        if ((!originalExists && trashExists) ||
+            (originalExists && !trashExists)) {
+          continue;
+        }
+        return false;
+      case PendingDeletionPhysicalState.restored:
+        if (originalExists && !trashExists) continue;
+        return false;
+      case PendingDeletionPhysicalState.deleted:
+        return false;
+    }
   }
   return true;
 }
