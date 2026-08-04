@@ -113,8 +113,7 @@ void main() {
     expect(interrupted.state, PendingDeletionState.staged);
     expect(
       interrupted.items.where(
-        (item) =>
-            item.physicalState == PendingDeletionPhysicalState.restored,
+        (item) => item.physicalState == PendingDeletionPhysicalState.restored,
       ),
       hasLength(1),
     );
@@ -135,6 +134,38 @@ void main() {
       expect(await fixture.originals[index].readAsBytes(), <int>[index + 1]);
       expect(await fixture.trashFiles[index].exists(), isFalse);
     }
+  });
+
+  test('originalとtrashが両方無い場合は復元分岐でfail-closed保持する', () async {
+    final fixture = await _RecoveryFixture.create(createTrash: false);
+    addTearDown(fixture.dispose);
+    await fixture.saveManifest();
+
+    final remaining = await recoverPendingDeletions(
+      manager: fixture.manager,
+      data: fixture.dataWithTrip,
+    );
+
+    expect(remaining, hasLength(1));
+    expect(remaining.single.state, PendingDeletionState.staged);
+    expect(await fixture.originals.single.exists(), isFalse);
+    expect(await fixture.trashFiles.single.exists(), isFalse);
+  });
+
+  test('originalとtrashが両方無い場合はpending化分岐でもfail-closed保持する', () async {
+    final fixture = await _RecoveryFixture.create(createTrash: false);
+    addTearDown(fixture.dispose);
+    await fixture.saveManifest();
+
+    final remaining = await recoverPendingDeletions(
+      manager: fixture.manager,
+      data: AppData.empty(),
+    );
+
+    expect(remaining, hasLength(1));
+    expect(remaining.single.state, PendingDeletionState.staged);
+    expect(await fixture.originals.single.exists(), isFalse);
+    expect(await fixture.trashFiles.single.exists(), isFalse);
   });
 }
 
@@ -169,6 +200,7 @@ class _RecoveryFixture {
 
   static Future<_RecoveryFixture> create({
     bool createOriginal = false,
+    bool createTrash = true,
     int photoCount = 1,
   }) async {
     final root = await Directory.systemTemp.createTemp(
@@ -185,8 +217,10 @@ class _RecoveryFixture {
       final trash = File(
         '${root.path}/trash/delete-trip-1/$index-original-$index.jpg',
       );
-      await trash.parent.create(recursive: true);
-      await trash.writeAsBytes(<int>[index + 1]);
+      if (createTrash) {
+        await trash.parent.create(recursive: true);
+        await trash.writeAsBytes(<int>[index + 1]);
+      }
       final photo = Photo(
         id: 'photo-$index',
         file: original,

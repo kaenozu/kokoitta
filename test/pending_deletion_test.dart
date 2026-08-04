@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/models.dart';
 import 'package:kokoitta_app/pending_deletion.dart';
+import 'package:kokoitta_app/pending_deletion_recovery.dart';
 import 'package:kokoitta_app/photo.dart';
 
 class MemoryManifestStore implements PendingDeletionManifestStore {
@@ -220,20 +221,6 @@ void main() {
     );
   });
 
-  test('再起動回収はstage途中のmanifestを元へ戻す', () async {
-    final op = await manager.deleteTrip(
-      data: current,
-      tripId: 'trip-1',
-      saveData: (_) async {},
-    );
-    final raw = store.value!;
-    store.value = raw.replaceFirst('"pending"', '"staged"');
-    await manager.recover();
-    expect(await original.exists(), isTrue);
-    expect(await manager.loadOperations(), isEmpty);
-    expect(op.operationId, isNotEmpty);
-  });
-
   test('期限切れ後のUndoは拒否され物理復元されない', () async {
     var now = DateTime.utc(2026, 1, 2, 4);
     final mutableManager = PendingDeletionManager(
@@ -432,58 +419,6 @@ void main() {
     );
   });
 
-  test('再起動後もundoCommitFailedはfail-closedでmanifestに保持される', () async {
-    final deleted = await manager.deleteTrip(
-      data: current,
-      tripId: 'trip-1',
-      saveData: (_) async {},
-    );
-    store.value = store.value!.replaceFirst('"pending"', '"undoCommitFailed"');
-    final restarted = PendingDeletionManager(
-      store: store,
-      trashRoot: '${root.path}/trash',
-      now: () => DateTime.utc(2026, 1, 2, 4, 1),
-    );
-    await restarted.recover();
-    final remaining = (await restarted.loadOperations()).single;
-    expect(remaining.operationId, deleted.operationId);
-    expect(remaining.state, PendingDeletionState.undoCommitFailed);
-    // 自動確定削除されずtrashも残る。
-    expect(await File(remaining.items.single.trashPath).exists(), isTrue);
-  });
-
-  test('originalとtrashの両方にファイルがある場合はrecoverでfail-closed', () async {
-    final deleted = await manager.deleteTrip(
-      data: current,
-      tripId: 'trip-1',
-      saveData: (_) async {},
-    );
-    store.value = store.value!.replaceFirst('"pending"', '"staged"');
-    // 外部操作でoriginalにもファイルが再作成された状態を再現する。
-    File(deleted.items.single.originalPath).writeAsBytesSync(<int>[9]);
-    await manager.recover();
-    final remaining = (await manager.loadOperations()).single;
-    expect(remaining.operationId, deleted.operationId);
-    // どちらのファイルも変更されない。
-    expect(await File(deleted.items.single.originalPath).exists(), isTrue);
-    expect(await File(deleted.items.single.trashPath).exists(), isTrue);
-  });
-
-  test('originalとtrashの両方が無い場合はrecoverでfail-closed', () async {
-    final deleted = await manager.deleteTrip(
-      data: current,
-      tripId: 'trip-1',
-      saveData: (_) async {},
-    );
-    store.value = store.value!.replaceFirst('"pending"', '"staged"');
-    await File(deleted.items.single.trashPath).delete();
-    await manager.recover();
-    final remaining = (await manager.loadOperations()).single;
-    expect(remaining.operationId, deleted.operationId);
-    expect(await File(deleted.items.single.originalPath).exists(), isFalse);
-    expect(await File(deleted.items.single.trashPath).exists(), isFalse);
-  });
-
   test('manifest保存失敗時は既存manifestを消さない', () async {
     final failingStore = FailingSaveManifestStore();
     final localManager = PendingDeletionManager(
@@ -663,13 +598,13 @@ void main() {
       (await failing.loadOperations()).single.operationId,
       deleted.operationId,
     );
-    // 再起動相当のrecoverでも消えず、復元済みitemも保持される。
+    // 再起動相当の起動時復旧でも消えず、復元済みitemも保持される。
     final restarted = PendingDeletionManager(
       store: store,
       trashRoot: '${root.path}/trash',
       now: () => DateTime.utc(2026, 1, 2, 4, 1),
     );
-    await restarted.recover();
+    await recoverPendingDeletions(manager: restarted, data: AppData.empty());
     final afterRecover = (await restarted.loadOperations()).single;
     expect(afterRecover.operationId, deleted.operationId);
     expect(

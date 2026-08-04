@@ -484,36 +484,6 @@ class PendingDeletionManager {
     };
   }
 
-  Future<void> recover() async {
-    final operations = await loadOperations();
-    for (final operation in [...operations]) {
-      if (operation.state != PendingDeletionState.staged) continue;
-      // staged操作でも、originalとの乖離やtrash欠損など曖昧な状態は
-      // fail-closedでmanifestを保持し、自動復元・削除を行わない。
-      if (!_canSafelyRestoreStaged(operation)) continue;
-      await _restoreMoved(operation.items);
-      operations.remove(operation);
-      await _save(operations);
-    }
-    // 期限切れの通常pendingだけを最終確定し、復旧必要operationは保持する。
-    await finalizeExpired();
-  }
-
-  /// staged操作を安全に自動復元できるかを確認する。
-  ///
-  /// 全itemがstagedで、originalが存在せずtrashが存在する場合のみ許可する。
-  /// originalとtrashの両方存在・両方欠損・一部restoredは安全側で処理を止める。
-  bool _canSafelyRestoreStaged(PendingDeletionOperation operation) {
-    for (final item in operation.items) {
-      if (item.physicalState != PendingDeletionPhysicalState.staged) {
-        return false;
-      }
-      if (File(item.originalPath).existsSync()) return false;
-      if (!File(item.trashPath).existsSync()) return false;
-    }
-    return true;
-  }
-
   Future<void> _restoreMoved(Iterable<PendingDeletionItem> items) async {
     for (final item in items.toList().reversed) {
       if (File(item.originalPath).existsSync()) continue;
