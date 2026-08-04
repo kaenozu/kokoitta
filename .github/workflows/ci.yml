@@ -36,17 +36,71 @@ jobs:
           git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
           python3 - <<'PY'
           from pathlib import Path
-          import subprocess
+          import re
+          import textwrap
 
-          path = Path('.github/workflows/agent-47-apply.yml')
-          lines = path.read_text(encoding='utf-8').splitlines()
+          staged_path = Path('.github/workflows/agent-47-apply.yml')
+          lines = staged_path.read_text(encoding='utf-8').splitlines()
           name_index = lines.index('      - name: Apply implementation')
           run_index = next(i for i in range(name_index, len(lines)) if lines[i] == '        run: |')
           end_index = next(i for i in range(run_index + 1, len(lines)) if lines[i].startswith('      - name: Verify changes'))
-          shell_lines = []
-          for line in lines[run_index + 1:end_index]:
-              shell_lines.append(line[10:] if line.startswith('          ') else line)
-          subprocess.run(['bash', '-euo', 'pipefail'], input='\n'.join(shell_lines), text=True, check=True)
+          shell_lines = [line[10:] if line.startswith('          ') else line for line in lines[run_index + 1:end_index]]
+          py_start = shell_lines.index("python3 - <<'PY'") + 1
+          py_end = len(shell_lines) - 1 - shell_lines[::-1].index('PY')
+          code = '\n'.join(shell_lines[py_start:py_end])
+
+          section_start = code.index("main = Path('android/app/src/main/kotlin/com/kaenozu/kokoitta_app/MainActivity.kt')")
+          section_end = code.index("Path('android/app/src/main/kotlin/com/kaenozu/kokoitta_app/SharedImageFormatValidator.kt')")
+          robust_patch = r'''
+          main = Path('android/app/src/main/kotlin/com/kaenozu/kokoitta_app/MainActivity.kt')
+          text = main.read_text(encoding='utf-8')
+
+          text, count = re.subn(
+              r'''        val mimeType = resolver\.getType\(uri\)\n        val displayName = resolveDisplayName\(resolver, uri\)\n        val extension = resolveExtension\(mimeType, displayName\)\n            \?: return UriCopyResult\(\n                errorCode = "unsupported_format",\n                reason = "未対応の形式です: \$\{mimeType \?: "不明"\}",\n            \)\n        if \(remainingRequestBytes <= 0\) \{''',
+              '''        val mimeType = resolver.getType(uri)\n        val displayName = resolveDisplayName(resolver, uri)\n        if (remainingRequestBytes <= 0) {''',
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'pre-copy format block replacements: {count}')
+
+          text, count = re.subn(
+              r'''File\.createTempFile\("share_\$\{session\.requestId\}_\$index-", "\.\$extension", cacheDir\)''',
+              '''File.createTempFile("share_${session.requestId}_$index-", ".part", cacheDir)''',
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'temp file extension replacements: {count}')
+
+          completed_pattern = re.compile(
+              r'''                StopReason\.COMPLETED -> UriCopyResult\(\n                    file = tempFile,\n                    displayName = displayName,\n                    mimeType = mimeType,\n                \)'''
+          )
+          completed_replacement = '''                StopReason.COMPLETED -> {\n                    val validation = SharedImageFormatValidator.validate(\n                        file = tempFile,\n                        declaredMimeType = mimeType,\n                        displayName = displayName,\n                    )\n                    val detectedFormat = validation.format\n                    if (validation.errorCode != null || detectedFormat == null) {\n                        failedTemp(\n                            tempFile,\n                            validation.errorCode ?: "unsupported_format",\n                            validation.reason ?: "未対応または破損した画像です",\n                        )\n                    } else {\n                        val finalized = finalizeTempFile(tempFile, detectedFormat.extension, session)\n                        UriCopyResult(\n                            file = finalized,\n                            displayName = displayName,\n                            mimeType = detectedFormat.canonicalMimeType,\n                        )\n                    }\n                }'''
+          text, count = completed_pattern.subn(completed_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'completed block replacements: {count}')
+
+          helper = '''    private fun finalizeTempFile(\n        temporaryFile: File,\n        extension: String,\n        session: RequestSession,\n    ): File {\n        val finalFile = File(\n            temporaryFile.parentFile,\n            "${temporaryFile.name.substringBeforeLast('.')}.$extension",\n        )\n        if (!temporaryFile.renameTo(finalFile)) {\n            throw IOException("一時画像の形式確定に失敗しました")\n        }\n        session.tempFiles.remove(temporaryFile)\n        session.tempFiles += finalFile\n        return finalFile\n    }\n\n'''
+          marker = '    private fun failedTemp(file: File, code: String, reason: String): UriCopyResult {'
+          if marker not in text:
+              raise SystemExit('failedTemp marker not found')
+          text = text.replace(marker, helper + marker, 1)
+
+          text, count = re.subn(
+              r'''    internal fun resolveExtension\(mimeType: String\?, displayName: String\?\): String\? \{.*?\n    \}\n\n    private fun resolveDisplayName''',
+              '''    internal fun resolveExtension(mimeType: String?, displayName: String?): String? =\n        SharedImageFormatValidator.claimedFormat(mimeType, displayName)?.extension\n\n    private fun resolveDisplayName''',
+              text,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise SystemExit(f'resolveExtension replacements: {count}')
+          main.write_text(text, encoding='utf-8')
+
+          '''
+          code = code[:section_start] + textwrap.dedent(robust_patch) + code[section_end:]
+          exec(compile(code, str(staged_path), 'exec'), {'__name__': '__main__'})
           PY
 
       - name: Verify changes
