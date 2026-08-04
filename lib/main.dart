@@ -209,13 +209,13 @@ class _HomePageState extends State<HomePage> {
       _updateState(() => _isLoading = false);
       if (recoveryReady) {
         _scheduleStartupCleanup();
+        await _consumeInitialSharedUris();
       } else {
         developer.log(
-          'startup cleanup skipped: pending deletion recovery unresolved',
+          'startup cleanup/import skipped: pending deletion recovery unresolved',
           name: 'kokoitta',
         );
       }
-      await _consumeInitialSharedUris();
     } catch (error) {
       if (!mounted) return;
       _updateState(() {
