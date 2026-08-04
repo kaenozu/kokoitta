@@ -69,12 +69,20 @@ tail_start = staged_code.index("gradle = Path('android/build.gradle.kts')")
 exec(compile(staged_code[tail_start:], 'agent-46-tail', 'exec'), {'Path': Path, '__name__': '__main__'})
 
 verifier = Path('scripts/verify-release-artifacts.sh')
-verifier_text = verifier.read_text(encoding='utf-8')
-broken = "-e 's/^\\\"//' -e 's/\\\"$/'"
-fixed = "-e 's/^\\\"//' -e 's/\\\"$//'"
-if verifier_text.count(broken) != 1:
-    raise SystemExit(f'normalization expression count={verifier_text.count(broken)}')
-verifier.write_text(verifier_text.replace(broken, fixed, 1), encoding='utf-8')
+verifier_lines = verifier.read_text(encoding='utf-8').splitlines()
+changed = 0
+for index, line in enumerate(verifier_lines):
+    if "tr -d '\\r' | sed" in line:
+        indent = line[: len(line) - len(line.lstrip())]
+        verifier_lines[index] = (
+            indent
+            + "tr -d '\\r' | sed -e 's/^[[:space:]]*//' "
+            + "-e 's/[[:space:]]*$//' -e 's/^\"//' -e 's/\"$//' | tail -n 1"
+        )
+        changed += 1
+if changed != 1:
+    raise SystemExit(f'normalization line count={changed}')
+verifier.write_text('\n'.join(verifier_lines) + '\n', encoding='utf-8')
 
 staged_path.unlink(missing_ok=True)
 Path('.agent-trigger-46').unlink(missing_ok=True)
