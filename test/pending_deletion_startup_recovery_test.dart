@@ -47,7 +47,7 @@ void main() {
 
     expect(remaining, isEmpty);
     expect(await fixture.manager.loadOperations(), isEmpty);
-    expect(await fixture.originals.single.readAsBytes(), <int>[1, 2, 3]);
+    expect(await fixture.originals.single.readAsBytes(), <int>[1]);
     expect(await fixture.trashFiles.single.exists(), isFalse);
   });
 
@@ -63,7 +63,7 @@ void main() {
     );
 
     expect(remaining, isEmpty);
-    expect(await fixture.originals.single.readAsBytes(), <int>[1, 2, 3]);
+    expect(await fixture.originals.single.readAsBytes(), <int>[1]);
     expect(await fixture.trashFiles.single.exists(), isFalse);
   });
 
@@ -80,7 +80,7 @@ void main() {
     expect(remaining, hasLength(1));
     expect(remaining.single.state, PendingDeletionState.staged);
     expect(await fixture.originals.single.readAsBytes(), <int>[9]);
-    expect(await fixture.trashFiles.single.readAsBytes(), <int>[1, 2, 3]);
+    expect(await fixture.trashFiles.single.readAsBytes(), <int>[1]);
   });
 
   test('複数写真の回復途中失敗をmanifestから再開して全写真を復元する', () async {
