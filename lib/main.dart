@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'image_decode.dart';
 import 'package:flutter/services.dart';
@@ -183,7 +184,7 @@ class _HomePageState extends State<HomePage> {
     _cleanupRunner =
         widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
     // Release/Profileでは必ず回復対応の初期化を使う。旧経路はdebugで明示的に
-    //比較検証する場合だけ有効化できる。
+    // 比較検証する場合だけ有効化できる。
     final useLegacyInitialization =
         kDebugMode &&
         const bool.fromEnvironment('KOKOITTA_USE_LEGACY_INITIALIZATION');
