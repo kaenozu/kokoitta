@@ -1,0 +1,358 @@
+name: Agent Issue 46 Apply
+
+on:
+  push:
+    branches:
+      - 'agent/46-release-artifact-verification-20260805'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: ${{ !contains(github.event.head_commit.message, '[agent-applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: agent/46-release-artifact-verification-20260805
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+
+      - name: Apply implementation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          release = Path('.github/workflows/release.yml')
+          text = release.read_text(encoding='utf-8')
+          needle = '''      - name: Cleanup signing secrets
+        if: always()
+'''
+          insert = '''      - name: Verify APK and AAB metadata
+        env:
+          EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
+          EXPECTED_VERSION_CODE: ${{ needs.validate.outputs.version_code }}
+          EXPECTED_APPLICATION_ID: com.kaenozu.kokoitta_app
+        run: |
+          scripts/verify-release-artifacts.sh \\
+            --apk build/app/outputs/flutter-apk/app-release.apk \\
+            --aab build/app/outputs/bundle/release/app-release.aab \\
+            --version "$EXPECTED_VERSION" \\
+            --version-code "$EXPECTED_VERSION_CODE" \\
+            --application-id "$EXPECTED_APPLICATION_ID"
+
+      - name: Cleanup signing secrets
+        if: always()
+'''
+          if 'Verify APK and AAB metadata' not in text:
+              if needle not in text:
+                  raise SystemExit('release workflow insertion point not found')
+              text = text.replace(needle, insert, 1)
+              release.write_text(text, encoding='utf-8')
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text(encoding='utf-8')
+          syntax_old = '''          bash -n scripts/validate-release.sh
+          bash -n test/validate_release_test.sh
+'''
+          syntax_new = '''          bash -n scripts/validate-release.sh
+          bash -n scripts/verify-release-artifacts.sh
+          bash -n test/validate_release_test.sh
+          bash -n test/verify_release_artifacts_test.sh
+'''
+          if 'bash -n scripts/verify-release-artifacts.sh' not in text:
+              if syntax_old not in text:
+                  raise SystemExit('CI syntax insertion point not found')
+              text = text.replace(syntax_old, syntax_new, 1)
+          test_old = '''      - name: Test release validation
+        run: bash test/validate_release_test.sh
+'''
+          test_new = '''      - name: Test release validation
+        run: |
+          bash test/validate_release_test.sh
+          bash test/verify_release_artifacts_test.sh
+'''
+          if 'bash test/verify_release_artifacts_test.sh' not in text:
+              if test_old not in text:
+                  raise SystemExit('CI test insertion point not found')
+              text = text.replace(test_old, test_new, 1)
+          ci.write_text(text, encoding='utf-8')
+
+          gradle = Path('android/build.gradle.kts')
+          text = gradle.read_text(encoding='utf-8')
+          block = r'''
+
+// Pinned bundletool is used only by release artifact verification.
+val releaseBundletool by configurations.creating
+
+dependencies {
+    add(releaseBundletool.name, "com.android.tools.build:bundletool:1.18.3")
+}
+
+tasks.register<JavaExec>("dumpReleaseBundleManifestAttribute") {
+    group = "verification"
+    description = "Print one Android App Bundle manifest attribute using bundletool."
+    classpath = releaseBundletool
+    mainClass.set("com.android.tools.build.bundletool.BundleToolMain")
+    doFirst {
+        val bundleFile = providers.gradleProperty("bundleFile").orNull
+            ?: throw GradleException("-PbundleFile is required")
+        val manifestXpath = providers.gradleProperty("manifestXpath").orNull
+            ?: throw GradleException("-PmanifestXpath is required")
+        args(
+            "dump",
+            "manifest",
+            "--bundle=$bundleFile",
+            "--xpath=$manifestXpath",
+        )
+    }
+}
+'''
+          if 'dumpReleaseBundleManifestAttribute' not in text:
+              gradle.write_text(text.rstrip() + block + '\n', encoding='utf-8')
+
+          Path('scripts/verify-release-artifacts.sh').write_text(r'''#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: verify-release-artifacts.sh --apk FILE --aab FILE --version X.Y.Z \
+  --version-code N --application-id PACKAGE
+EOF
+  exit 2
+}
+
+APK=""
+AAB=""
+EXPECTED_VERSION=""
+EXPECTED_VERSION_CODE=""
+EXPECTED_APPLICATION_ID=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --apk) APK="${2:-}"; shift 2 ;;
+    --aab) AAB="${2:-}"; shift 2 ;;
+    --version) EXPECTED_VERSION="${2:-}"; shift 2 ;;
+    --version-code) EXPECTED_VERSION_CODE="${2:-}"; shift 2 ;;
+    --application-id) EXPECTED_APPLICATION_ID="${2:-}"; shift 2 ;;
+    *) echo "ERROR: unknown argument '$1'" >&2; usage ;;
+  esac
+done
+
+[[ -n "$APK" && -n "$AAB" && -n "$EXPECTED_VERSION" && -n "$EXPECTED_VERSION_CODE" && -n "$EXPECTED_APPLICATION_ID" ]] || usage
+[[ -f "$APK" ]] || { echo "ERROR: APK not found: $APK" >&2; exit 1; }
+[[ -f "$AAB" ]] || { echo "ERROR: AAB not found: $AAB" >&2; exit 1; }
+[[ "$EXPECTED_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ERROR: invalid version" >&2; exit 1; }
+[[ "$EXPECTED_VERSION_CODE" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: invalid version code" >&2; exit 1; }
+[[ "$EXPECTED_APPLICATION_ID" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || { echo "ERROR: invalid application ID" >&2; exit 1; }
+
+find_apkanalyzer() {
+  if [[ -n "${APKANALYZER_BIN:-}" ]]; then
+    printf '%s\n' "$APKANALYZER_BIN"
+    return
+  fi
+  if command -v apkanalyzer >/dev/null 2>&1; then
+    command -v apkanalyzer
+    return
+  fi
+  local sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+  [[ -n "$sdk" ]] || return 1
+  find "$sdk/cmdline-tools" -type f -path '*/bin/apkanalyzer' -print 2>/dev/null | sort -V | tail -n 1
+}
+
+APKANALYZER="$(find_apkanalyzer)"
+[[ -n "$APKANALYZER" && -x "$APKANALYZER" ]] || { echo "ERROR: apkanalyzer not found" >&2; exit 1; }
+
+normalize() {
+  tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$/' | tail -n 1
+}
+
+assert_equal() {
+  local label="$1" expected="$2" actual="$3"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "ERROR: $label mismatch: expected '$expected', got '$actual'" >&2
+    exit 1
+  fi
+  echo "PASS: $label = $actual"
+}
+
+apk_application_id="$($APKANALYZER manifest application-id "$APK" | normalize)"
+apk_version_name="$($APKANALYZER manifest version-name "$APK" | normalize)"
+apk_version_code="$($APKANALYZER manifest version-code "$APK" | normalize)"
+
+assert_equal "APK applicationId" "$EXPECTED_APPLICATION_ID" "$apk_application_id"
+assert_equal "APK versionName" "$EXPECTED_VERSION" "$apk_version_name"
+assert_equal "APK versionCode" "$EXPECTED_VERSION_CODE" "$apk_version_code"
+
+read_bundle_attribute() {
+  local xpath="$1"
+  if [[ -n "${BUNDLE_DUMP_RUNNER:-}" ]]; then
+    "$BUNDLE_DUMP_RUNNER" "$AAB" "$xpath" | normalize
+  else
+    ./android/gradlew -p android -q dumpReleaseBundleManifestAttribute \
+      --no-daemon \
+      -PbundleFile="$(realpath "$AAB")" \
+      -PmanifestXpath="$xpath" | normalize
+  fi
+}
+
+aab_application_id="$(read_bundle_attribute '/manifest/@package')"
+aab_version_name="$(read_bundle_attribute '/manifest/@android:versionName')"
+aab_version_code="$(read_bundle_attribute '/manifest/@android:versionCode')"
+
+assert_equal "AAB applicationId" "$EXPECTED_APPLICATION_ID" "$aab_application_id"
+assert_equal "AAB versionName" "$EXPECTED_VERSION" "$aab_version_name"
+assert_equal "AAB versionCode" "$EXPECTED_VERSION_CODE" "$aab_version_code"
+
+apk_sha256="$(sha256sum "$APK" | awk '{print $1}')"
+aab_sha256="$(sha256sum "$AAB" | awk '{print $1}')"
+echo "APK SHA-256: $apk_sha256"
+echo "AAB SHA-256: $aab_sha256"
+''', encoding='utf-8')
+
+          Path('test/verify_release_artifacts_test.sh').write_text(r'''#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT="$ROOT/scripts/verify-release-artifacts.sh"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+touch "$TMP/app.apk" "$TMP/app.aab"
+
+cat > "$TMP/apkanalyzer" <<'EOF'
+#!/usr/bin/env bash
+case "$2" in
+  application-id) echo "${FAKE_APK_APPLICATION_ID:-com.kaenozu.kokoitta_app}" ;;
+  version-name) echo "${FAKE_APK_VERSION_NAME:-1.2.3}" ;;
+  version-code) echo "${FAKE_APK_VERSION_CODE:-42}" ;;
+  *) exit 3 ;;
+esac
+EOF
+chmod +x "$TMP/apkanalyzer"
+
+cat > "$TMP/bundle-dump" <<'EOF'
+#!/usr/bin/env bash
+case "$2" in
+  /manifest/@package) echo "${FAKE_AAB_APPLICATION_ID:-com.kaenozu.kokoitta_app}" ;;
+  /manifest/@android:versionName) echo "${FAKE_AAB_VERSION_NAME:-1.2.3}" ;;
+  /manifest/@android:versionCode) echo "${FAKE_AAB_VERSION_CODE:-42}" ;;
+  *) exit 4 ;;
+esac
+EOF
+chmod +x "$TMP/bundle-dump"
+
+PASS=0
+FAIL=0
+run_case() {
+  local name="$1" expected="$2"
+  shift 2
+  set +e
+  "$@" >/dev/null 2>&1
+  local actual=$?
+  set -e
+  if [[ "$actual" == "$expected" ]]; then
+    echo "PASS: $name"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL: $name expected $expected got $actual"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+base=(env APKANALYZER_BIN="$TMP/apkanalyzer" BUNDLE_DUMP_RUNNER="$TMP/bundle-dump" bash "$SCRIPT" --apk "$TMP/app.apk" --aab "$TMP/app.aab" --version 1.2.3 --version-code 42 --application-id com.kaenozu.kokoitta_app)
+run_case success 0 "${base[@]}"
+run_case apk-version-mismatch 1 env FAKE_APK_VERSION_NAME=9.9.9 "${base[@]}"
+run_case aab-package-mismatch 1 env FAKE_AAB_APPLICATION_ID=com.example.wrong "${base[@]}"
+run_case invalid-version 1 env APKANALYZER_BIN="$TMP/apkanalyzer" BUNDLE_DUMP_RUNNER="$TMP/bundle-dump" bash "$SCRIPT" --apk "$TMP/app.apk" --aab "$TMP/app.aab" --version v1.2.3 --version-code 42 --application-id com.kaenozu.kokoitta_app
+run_case missing-apk 1 env APKANALYZER_BIN="$TMP/apkanalyzer" BUNDLE_DUMP_RUNNER="$TMP/bundle-dump" bash "$SCRIPT" --apk "$TMP/missing.apk" --aab "$TMP/app.aab" --version 1.2.3 --version-code 42 --application-id com.kaenozu.kokoitta_app
+
+printf 'Results: %d passed, %d failed\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]
+''', encoding='utf-8')
+
+          security = Path('test/validate_workflow_security.sh')
+          text = security.read_text(encoding='utf-8')
+          marker = '''assert_section_contains "$release_section" "kokoitta_app-*.aab" \\
+  "AAB is attached to GitHub Release"
+'''
+          addition = marker + '''assert_section_contains "$release_section" "Verify APK and AAB metadata" \\
+  "release verifies artifact metadata before publish"
+assert_section_contains "$release_section" "scripts/verify-release-artifacts.sh" \\
+  "release invokes the production artifact verifier"
+
+verify_line=$(grep -nF "Verify APK and AAB metadata" "$RELEASE_YML" | cut -d: -f1)
+cleanup_line=$(grep -nF "Cleanup signing secrets" "$RELEASE_YML" | cut -d: -f1)
+if [[ -n "$verify_line" && -n "$cleanup_line" && "$verify_line" -lt "$cleanup_line" ]]; then
+  pass "artifact verification occurs before signing cleanup and publish"
+else
+  fail "artifact verification must occur before cleanup and publish"
+fi
+'''
+          if 'release verifies artifact metadata before publish' not in text:
+              if marker not in text:
+                  raise SystemExit('workflow security insertion point not found')
+              text = text.replace(marker, addition, 1)
+              security.write_text(text, encoding='utf-8')
+
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          section = '''
+
+### Release artifact metadata verification
+
+The release workflow verifies the generated APK and AAB before any GitHub Release is published. The check fails closed unless both artifacts contain the resolved `applicationId`, `versionName`, and `versionCode`. APK metadata is read with the Android SDK `apkanalyzer`; AAB metadata is read with pinned `bundletool` 1.18.3 through the Gradle verification task. The workflow also records SHA-256 digests without printing signing secrets.
+
+For a manual release, start `Android Release` from the `main` branch and provide an unused `X.Y.Z` version. The triggering event commit is fixed for the whole run; advancing `main` after dispatch does not change the build target. Signed publication still requires the protected `android-release` Environment and its four signing secrets.
+'''
+          if '### Release artifact metadata verification' not in text:
+              readme.write_text(text.rstrip() + section + '\n', encoding='utf-8')
+          PY
+          chmod +x scripts/verify-release-artifacts.sh test/verify_release_artifacts_test.sh
+          rm .github/workflows/agent-46-apply.yml
+
+      - name: Verify changes
+        shell: bash
+        run: |
+          flutter pub get
+          git diff --exit-code -- pubspec.lock
+          bash -n scripts/validate-release.sh
+          bash -n scripts/verify-release-artifacts.sh
+          bash -n test/validate_release_test.sh
+          bash -n test/verify_release_artifacts_test.sh
+          bash -n test/validate_workflow_security.sh
+          bash -n test/validate_release_ref_resolution.sh
+          bash test/validate_release_test.sh
+          bash test/verify_release_artifacts_test.sh
+          bash test/validate_workflow_security.sh
+          bash test/validate_release_ref_resolution.sh
+          flutter analyze
+          flutter test
+          ./android/gradlew -p android :app:testDebugUnitTest --no-daemon
+          flutter build apk --debug
+          git diff --check
+
+      - name: Commit verified changes
+        shell: bash
+        run: |
+          git config user.name 'ChatGPT Agent'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'ci: verify release artifact metadata [agent-applied]'
+          git push origin HEAD:agent/46-release-artifact-verification-20260805
