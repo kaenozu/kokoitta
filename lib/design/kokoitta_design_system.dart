@@ -258,7 +258,7 @@ ThemeData buildKokoittaDesignTheme(Brightness brightness) {
       height: 1.2,
     ),
     titleLarge: baseTextTheme.titleLarge?.copyWith(
-      fontWeight: FontWeight.w750,
+      fontWeight: FontWeight.w700,
       height: 1.25,
     ),
     titleMedium: baseTextTheme.titleMedium?.copyWith(
