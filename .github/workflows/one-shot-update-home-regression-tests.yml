@@ -1,0 +1,103 @@
+name: One-shot update home regression tests
+
+on:
+  push:
+    branches:
+      - agent/85-home-map-redesign
+    paths:
+      - '.github/workflows/one-shot-update-home-regression-tests.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: agent/85-home-map-redesign
+          fetch-depth: 0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
+      - name: Update regression contracts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          widget = Path('test/widget_test.dart')
+          text = widget.read_text(encoding='utf-8')
+          old = """    final addPhotoButton = find.ancestor(
+              of: find.byTooltip('写真を追加').first,
+              matching: find.byType(IconButton),
+            );
+            expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNull);
+          """
+          new = """    final addPhotoButton = find.widgetWithText(
+              FilledButton,
+              '写真を追加',
+            );
+            expect(tester.widget<FilledButton>(addPhotoButton).onPressed, isNull);
+          """
+          if old not in text:
+              raise SystemExit('disabled photo CTA assertion pattern not found')
+          text = text.replace(old, new, 1)
+          old = """    final reenabledAddPhotoButton = find.ancestor(
+              of: find.byTooltip('写真を追加').first,
+              matching: find.byType(IconButton),
+            );
+            expect(
+              tester.widget<IconButton>(reenabledAddPhotoButton).onPressed,
+              isNotNull,
+            );
+          """
+          new = """    final reenabledAddPhotoButton = find.widgetWithText(
+              FilledButton,
+              '写真を追加',
+            );
+            expect(
+              tester.widget<FilledButton>(reenabledAddPhotoButton).onPressed,
+              isNotNull,
+            );
+          """
+          if old not in text:
+              raise SystemExit('reenabled photo CTA assertion pattern not found')
+          widget.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          dashboard = Path('test/home_dashboard_test.dart')
+          text = dashboard.read_text(encoding='utf-8')
+          old = """          builder: (context) => ColoredBox(
+                    color: context.kokoittaColors.successContainer,
+                    child: const SizedBox.expand(),
+                  ),
+          """
+          new = """          builder: (context) => ColoredBox(
+                    key: const ValueKey<String>('semantic-color-fallback'),
+                    color: context.kokoittaColors.successContainer,
+                    child: const SizedBox.expand(),
+                  ),
+          """
+          if old not in text:
+              raise SystemExit('semantic fallback fixture pattern not found')
+          text = text.replace(old, new, 1)
+          old = "expect(find.byType(ColoredBox), findsOneWidget);"
+          new = "expect(find.byKey(const ValueKey<String>('semantic-color-fallback')), findsOneWidget);"
+          if old not in text:
+              raise SystemExit('semantic fallback finder pattern not found')
+          dashboard.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          rm .github/workflows/one-shot-update-home-regression-tests.yml
+          dart format test/widget_test.dart test/home_dashboard_test.dart
+          git diff --check
+      - name: Commit regression updates
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'test: align home regressions with the single primary CTA'
+          git push origin HEAD:agent/85-home-map-redesign
