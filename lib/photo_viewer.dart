@@ -18,10 +18,10 @@ class PhotoLoadFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Semantics(
+    return Semantics(
       image: true,
       label: '写真を表示できません。戻る操作は利用できます',
-      child: ExcludeSemantics(
+      child: const ExcludeSemantics(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
@@ -134,7 +134,9 @@ class _PhotoViewerState extends State<PhotoViewer> {
           liveRegion: true,
           label: '写真 ${_currentIndex + 1} / ${widget.photos.length}',
           child: ExcludeSemantics(
-            child: Text('${widget.title ?? '写真'} ${_currentIndex + 1} / ${widget.photos.length}'),
+            child: Text(
+              '${widget.title ?? '写真'} ${_currentIndex + 1} / ${widget.photos.length}',
+            ),
           ),
         ),
         actions: <Widget>[
