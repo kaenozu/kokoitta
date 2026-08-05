@@ -49,15 +49,27 @@ Secrets が不足している場合、ワークフローはビルド前に失敗
 
 これらの Secrets は **repository secrets ではなく、`android-release` Environment の Environment secrets として登録してください**。詳細は「セキュリティ」セクションを参照してください。
 
-### バージョニング
+### バージョニングと対象commit
 
 - **versionName**: タグ `vX.Y.Z` から `X.Y.Z` を抽出して使用。手動実行の場合は入力 `version` をそのまま使用
 - **versionCode**: `github.run_number` を使用。再実行時に同じ versionCode になる（上書き防止）
-- **Commit SHA**: タグ push ではタグが指す commit、手動実行では `main` の先端をビルド対象とする
-- **タグ commit の検証**: タグ push では、タグが指す commit が `main` の履歴に含まれる場合だけ続行する
-- **タグと commit の一致**: 同名の Git タグが既に存在し、異なる commit を指している場合は失敗する。同名 Release が既に存在する場合も失敗する
-- **出力**: APK と AAB の両方を生成し、GitHub Release に添付する
-- 不正なタグ形式（`v1.2`、`1.2.3`、`v1.2.3-beta` など）は検証ステップでビルド前に失敗します
+- **Commit SHA**: タグ push ではタグが指すcommit、手動実行ではRun workflowを開始したイベント時点の`${{ github.sha }}`を固定して使用する
+- 手動実行後に`main`が進んでも、validate・build・GitHub Releaseは同じ固定commitを参照する
+- **タグ commit の検証**: タグ pushでは、タグが指すcommitが`main`の履歴に含まれる場合だけ続行する
+- **タグと commit の一致**: 同名のGitタグが既に存在し、異なるcommitを指している場合は失敗する。同名Releaseが既に存在する場合も失敗する
+- **出力**: APKとAABの両方を生成し、GitHub Releaseに添付する
+- 不正なタグ形式（`v1.2`、`1.2.3`、`v1.2.3-beta`など）はビルド前に失敗する
+
+### 成果物メタデータ検査
+
+GitHub Releaseを作成する前に、生成したAPKとAABの実体を検査します。
+
+- APKはAndroid SDKの`apkanalyzer`で`applicationId`、`versionName`、`versionCode`を取得
+- AABは固定した`bundletool 1.18.3`で同じ3項目を取得
+- 期待するpackageは`com.kaenozu.kokoitta_app`
+- 期待するversionName/versionCodeはvalidate jobが解決した値
+- APKとAABのどちらか一方でも不一致なら、署名ファイルをcleanupして公開前に失敗する
+- 検証後にAPK/AABのSHA-256を記録する。署名秘密値は出力しない
 
 ### リリース手順（タグ push）
 
@@ -72,90 +84,50 @@ git push origin v1.2.0
 
 ### リリース手順（手動実行）
 
-1. GitHub リポジトリ → Actions → Android Release → Run workflow
-2. Branch は `main` を選択
-3. 入力:
-    - **version**: `1.2.0`（`v` なしの semver）
-4. ワークフローは `main` の先端をチェックアウトし、ビルド・署名・Release 作成を実行する
-5. Release タグ `v1.2.0` は `main` の先端 commit SHA に作成される
-6. 同名タグが別の SHA を指している場合、または同名 Release が既に存在する場合は失敗する
+1. GitHubリポジトリ → Actions → Android Release → Run workflow
+2. Branchは`main`を選択
+3. `version`へ`1.2.0`のような`v`なしsemverを入力
+4. 実行イベント時点のcommit SHAが対象として固定される
+5. validate jobがそのcommitの`main`包含、version、tag/Release競合を検証する
+6. release jobは同じcommitから署名済みAPK/AABを生成する
+7. 成果物メタデータが期待値と一致した場合だけReleaseタグと成果物を公開する
 
 ### セキュリティ
 
 #### 信頼境界（コードで保証）
 
-- 手動リリース（`workflow_dispatch`）は常に `main` ブランチの先端をビルド対象とします。任意の ref を指定することはできません
-- タグ push はタグが指す commit をビルドし、その commit が `main` の履歴に含まれることを Secrets なしの validate ジョブで検証します
-- `release` ジョブは `if:` 条件により、`workflow_dispatch` では `refs/heads/main`、`push`（タグ）では `refs/tags/v*` の場合のみ実行されます
-- 署名 Secrets は `validate` ジョブには渡されません。`release` ジョブでのみ使用され、第三者Action実行前に削除されます
-- `validate` ジョブは `contents: read` 権限のみで実行され、Release 作成は `release` ジョブ（`contents: write`）に分離されています
-- ビルドと署名の後、第三者Action（`softprops/action-gh-release`）の実行**前**に署名ファイル（keystore, key.properties）を削除します。`if: always()` により失敗経路でも削除が実行され、cleanup が失敗した場合は Publish を中止します
-- release workflow で使用する Action は可変タグではなく、完全 commit SHA に固定します
-- 同一バージョンの重複リリースを防ぐため、`concurrency` により直列化されます
-- イベント入力（version, tag名）は `env:` 経由で受け渡し、shell 内で直接展開しません。`scripts/validate-release.sh` の semver 検証により shell injection を防止します
+- 手動リリースは`main`からのみ開始でき、任意ref入力は持たない
+- validate jobは実行イベント時のcommitをcheckoutし、そのSHAをrelease jobへ渡す
+- タグpushはタグcommitが`main`履歴に含まれることをSecretsなしのvalidate jobで確認する
+- release jobは手動実行の`refs/heads/main`または`v*`タグpushの場合だけ実行する
+- 署名Secretsはvalidate jobへ渡さず、`android-release` Environmentを使用するrelease jobだけで参照する
+- validate jobは`contents: read`、Release作成はrelease jobの`contents: write`へ分離する
+- 成果物を検査した後、第三者Actionの前にkeystoreとkey.propertiesを削除する
+- cleanupは`if: always()`で失敗経路でも実行し、cleanup失敗時はPublishを中止する
+- workflow内Actionは完全commit SHAへ固定する
+- 同一バージョンは`concurrency`で直列化する
+- version/tag入力は`env:`経由で渡し、`scripts/validate-release.sh`で検証する
 
-#### GitHub 設定（手動設定が必要）
+#### GitHub設定（人間による設定が必要）
 
-以下の設定は GitHub リポジトリ設定画面で手動で行う必要があります。未設定の場合、**コード上の保護のみでは不十分**であり、特にタグ push 経路では未信頼 workflow 定義による攻撃を完全には防げません。
+コード外では、次を設定してください。
 
-##### Environment 設定
-
-1. **Environment の作成**
-   - リポジトリ → Settings → Environments → `android-release` を作成
-2. **Environment secrets の登録**
-   - 署名 Secrets（`ANDROID_KEYSTORE_BASE64`, `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`）を repository secrets ではなく、`android-release` Environment の Environment secrets として登録
-   - これにより、`release` ジョブが `environment: android-release` を宣言した場合のみ Secrets が注入される
-   - repository secrets に登録した場合、任意の workflow からアクセス可能になるため推奨しません
-3. **Deployment branches and tags**
-   - `Deployment branches` タブで `main` を追加（`Selected branches` モード）
-   - `Deployment tags` タブで `v*.*.*` を追加（`Selected tags` モード）
-   - これにより、未信頼ブランチや未信頼タグからの workflow 実行時に Environment secrets へのアクセスを遮断します
-4. **Required reviewers**（GitHub Enterprise/Team プラン）
-   - `Required reviewers` を 1 名以上追加
-   - デプロイ承認プロセスが追加され、`release` ジョブは承認されるまで一時停止します
-   - 利用可能なプランでない場合、この設定はスキップされます。その場合、タグ push 経路の保護は環境変数と tag ruleset に依存します
-
-##### Ruleset 設定（タグ保護）
-
-タグ push 経路では、workflow 定義ファイル自体がタグが指す commit から実行されるため、コード上で完全に保護することはできません。以下の GitHub Ruleset 設定を推奨します。
-
-1. **Tag ruleset の作成**
-   - リポジトリ → Settings → Rules → Rulesets → `New ruleset` → `Tag`
-   - 対象タグパターン: `v*.*.*`
-   - `Restrict creations` を有効化
-   - 許可するユーザー/チームを限定
-   - 少なくとも管理者のみがリリースタグを作成できるようにする
-2. **Branch ruleset の作成（推奨）**
-   - `main` ブランチに対する `Require a pull request before merging` の有効化
-   - `Require approvals` の設定
-
-##### Repository secrets の注意
-
-現状の workflow は `release` ジョブが `environment: android-release` を宣言しているため、Environment secrets から Secret を解決します。しかし、**repository secrets にも同じ Secret が存在する場合**、任意の workflow からアクセス可能です。必ず repository secrets からは削除し、Environment secrets のみに設定してください。
-
-#### タグ push のリスクモデル
-
-GitHub Actions の仕様上、タグ push で起動した workflow は、そのタグが指す commit 上の workflow 定義を実行します。つまり、攻撃者が任意の workflow 定義を含むタグを作成できる場合：
-
-1. 悪意のある workflow が `on: push: tags: ['v*.*.*']` を宣言して起動する
-2. その workflow が `release` ジョブを宣言し、`environment: android-release` なしで直接 Secrets を参照しようとしても、Environment の branch/tag rules によりアクセスは拒否される
-3. ただし、悪意のある workflow が `GITHUB_TOKEN` の `contents: write` 権限を利用して不正な Release を作成する可能性は残る
-
-このリスクを軽減するには、前述の Ruleset 設定でタグ作成を制限する必要があります。
+1. `android-release` Environmentを作成
+2. 署名4 SecretsをEnvironment secretsへ登録し、repository secretsには残さない
+3. Deployment branchesへ`main`、Deployment tagsへ`v*.*.*`を設定
+4. 利用可能なプランではRequired reviewersを設定
+5. `v*.*.*`のTag rulesetでタグ作成者を制限
+6. `main`のBranch rulesetでPull Requestと必要なstatus checkを必須化
 
 ### 注意事項
 
-- 同一バージョンの Release が既に存在する場合、ワークフローは早期に失敗します
-- 同名の Git タグが既に存在し、異なる commit を指している場合も失敗します
-- 再実行（Re-run）は同じ versionCode を生成するため、既存の Release を上書きしません
-- タグ push ではタグが指す `main` 履歴上の commit、手動リリースでは `main` の先端がビルド対象となり、ログと成果物ファイル名に commit SHA が含まれます
-- 署名キーストアと key.properties は第三者Action（Release公開）の**前に自動削除**されます
-- cleanup は失敗経路でも実行されます（`if: always()`）。cleanup 自体が失敗した場合は Release 公開を中止します
-- エラー時は validate ジョブのログを確認してください。署名シークレット関連のエラーは fail-fast で停止します
-- Environment 設定が未完了の場合、タグ push 経路での署名 Secrets 保護は不完全です。リリース前に「セキュリティ」セクションの手動設定を完了してください
+- 同一バージョンのReleaseが既に存在する場合は早期失敗する
+- 同名Gitタグが異なるcommitを指す場合も失敗する
+- 再実行は同じversionCodeを使用し、既存Releaseを上書きしない
+- 成果物名とログには固定したcommitのshort SHAを含める
+- Environment設定、Secrets登録、実署名Releaseは所有者による明示的な運用受入が必要
 
 ### 同一バージョンの競合防止
 
-- **Concurrency**: 同一バージョンのワークフローが同時に実行されるのを防止します。`push tag` と `workflow_dispatch` の両方を同じ concurrency group で直列化します
-- 先に実行中のリリースがある場合、後続の実行はキューイングされ、完了後に開始されます
-- `cancel-in-progress: false` のため、進行中のリリースが中断されることはありません
+- `push tag`と`workflow_dispatch`を同一versionのconcurrency groupで直列化します
+- `cancel-in-progress: false`のため、進行中のReleaseを後続実行が中断しません

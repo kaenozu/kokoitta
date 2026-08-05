@@ -1,7 +1,7 @@
 # .github/workflows/release.yml
 # リリースワークフロー - タグ起動 / 手動起動
 # タグ vX.Y.Z の push、または workflow_dispatch で起動
-# 関連: scripts/validate-release.sh, README.md
+# 関連: scripts/validate-release.sh, scripts/verify-release-artifacts.sh, README.md
 
 name: Android Release
 
@@ -223,6 +223,19 @@ jobs:
             --build-number="${{ needs.validate.outputs.version_code }}"
           cp build/app/outputs/bundle/release/app-release.aab \
             "kokoitta_app-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.short_sha }}.aab"
+
+      - name: Verify APK and AAB metadata
+        env:
+          EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
+          EXPECTED_VERSION_CODE: ${{ needs.validate.outputs.version_code }}
+          EXPECTED_APPLICATION_ID: com.kaenozu.kokoitta_app
+        run: |
+          bash scripts/verify-release-artifacts.sh \
+            --apk build/app/outputs/flutter-apk/app-release.apk \
+            --aab build/app/outputs/bundle/release/app-release.aab \
+            --version "$EXPECTED_VERSION" \
+            --version-code "$EXPECTED_VERSION_CODE" \
+            --application-id "$EXPECTED_APPLICATION_ID"
 
       - name: Cleanup signing secrets
         if: always()
