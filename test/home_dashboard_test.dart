@@ -75,6 +75,25 @@ void main() {
     );
   });
 
+  testWidgets('semantic colors fall back for plain Material themes', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(useMaterial3: true),
+        home: Builder(
+          builder: (context) => ColoredBox(
+            color: context.kokoittaColors.successContainer,
+            child: const SizedBox.expand(),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(ColoredBox), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('360x800 at 200 percent text keeps one primary photo CTA', (
     tester,
   ) async {
