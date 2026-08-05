@@ -1,13 +1,13 @@
 part of 'main.dart';
 
 extension _HomeView on _HomePageState {
-  static const _photoQuota = 300;
-
   int get _photoCount =>
       _data.unassignedPhotos.length +
       _data.trips.fold<int>(0, (total, trip) => total + trip.photos.length);
 
-  bool get _photoQuotaReached => _photoCount >= _photoQuota;
+  PhotoQuotaStatus get _quotaStatus => PhotoQuotaStatus(count: _photoCount);
+
+  bool get _photoQuotaReached => _quotaStatus.reached;
 
   bool get _isDisabled => _isLoading || _coordinator.isBusy || _isImportBusy;
 
@@ -181,24 +181,7 @@ extension _HomeView on _HomePageState {
           ),
         ),
         const SizedBox(height: 12),
-        Semantics(
-          liveRegion: true,
-          label:
-              '写真使用数 $_photoCount枚、上限 $_photoQuota枚、残り${(_photoQuota - _photoCount).clamp(0, _photoQuota)}枚',
-          child: Card(
-            child: ListTile(
-              leading: Icon(
-                _photoQuotaReached ? Icons.block : Icons.photo_library_outlined,
-              ),
-              title: Text('写真 $_photoCount / $_photoQuota枚'),
-              subtitle: Text(
-                _photoQuotaReached
-                    ? '上限に達しています。既存の写真を整理してください'
-                    : '残り ${(_photoQuota - _photoCount).clamp(0, _photoQuota)}枚',
-              ),
-            ),
-          ),
-        ),
+        PhotoQuotaCard(status: _quotaStatus),
         const SizedBox(height: 28),
         Card(
           child: Padding(
@@ -569,63 +552,7 @@ extension _PhotoViewerActions on _HomePageState {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (_) =>
-            _PhotoViewer(photos: photos, initialIndex: initialIndex),
-      ),
-    );
-  }
-}
-
-class _PhotoViewer extends StatefulWidget {
-  const _PhotoViewer({required this.photos, required this.initialIndex});
-
-  final List<Photo> photos;
-  final int initialIndex;
-
-  @override
-  State<_PhotoViewer> createState() => _PhotoViewerState();
-}
-
-class _PhotoViewerState extends State<_PhotoViewer> {
-  late final PageController _controller = PageController(
-    initialPage: widget.initialIndex,
-  );
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('写真')),
-      body: PageView.builder(
-        controller: _controller,
-        itemCount: widget.photos.length,
-        itemBuilder: (context, index) => LayoutBuilder(
-          builder: (context, constraints) {
-            final dimension = fullscreenDecodeDimension(
-              logicalWidth: constraints.maxWidth,
-              logicalHeight: constraints.maxHeight,
-              devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
-            );
-            return InteractiveViewer(
-              minScale: 1,
-              maxScale: 4,
-              child: Center(
-                child: Image.file(
-                  widget.photos[index].file,
-                  fit: BoxFit.contain,
-                  cacheWidth: dimension,
-                  errorBuilder: (_, _, _) =>
-                      const Icon(Icons.broken_image_outlined, size: 72),
-                ),
-              ),
-            );
-          },
-        ),
+        builder: (_) => PhotoViewer(photos: photos, initialIndex: initialIndex),
       ),
     );
   }

@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'app_data_operations.dart';
+import 'app_theme.dart';
 import 'backup_service.dart';
 import 'models.dart';
 import 'offline_japan_map.dart';
@@ -18,6 +19,8 @@ import 'operation_coordinator.dart';
 import 'pending_deletion.dart';
 import 'pending_deletion_recovery.dart';
 import 'photo.dart';
+import 'photo_quota.dart';
+import 'photo_viewer.dart';
 import 'import_progress.dart';
 import 'storage_cleanup.dart';
 import 'trip_store.dart';
@@ -56,59 +59,8 @@ class KokoittaApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'ここいった',
-      theme: ThemeData(
-        colorScheme:
-            ColorScheme.fromSeed(
-              seedColor: const Color(0xff1b4332),
-              brightness: Brightness.light,
-            ).copyWith(
-              primary: const Color(0xff1b4332),
-              secondary: const Color(0xffff7051),
-              surface: const Color(0xfffcf9f8),
-            ),
-        scaffoldBackgroundColor: const Color(0xfffcf9f8),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xfffcf9f8),
-          foregroundColor: Color(0xff1b1c1c),
-          elevation: 0,
-          centerTitle: false,
-        ),
-        cardTheme: CardThemeData(
-          color: Colors.white,
-          elevation: 1,
-          shadowColor: const Color(0x221b4332),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          margin: EdgeInsets.zero,
-        ),
-        navigationBarTheme: const NavigationBarThemeData(
-          backgroundColor: Color(0xfff0eded),
-          indicatorColor: Color(0xffc1ecd4),
-        ),
-        floatingActionButtonTheme: const FloatingActionButtonThemeData(
-          backgroundColor: Color(0xff1b4332),
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(28)),
-          ),
-        ),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xff8fd3aa),
-          brightness: Brightness.dark,
-        ).copyWith(primary: Color(0xffb5e8c8), secondary: Color(0xffffa58f)),
-        cardTheme: CardThemeData(
-          elevation: 1,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          margin: EdgeInsets.zero,
-        ),
-        useMaterial3: true,
-      ),
+      theme: buildKokoittaTheme(Brightness.light),
+      darkTheme: buildKokoittaTheme(Brightness.dark),
       themeMode: ThemeMode.system,
       home: HomePage(
         cleanupRunner: cleanupRunner,

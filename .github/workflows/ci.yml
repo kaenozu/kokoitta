@@ -2,78 +2,66 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-and-verify:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     steps:
-      - name: Checkout PR branch
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: agent/27-28-29-ui-contracts-20260805
-          fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Java
-        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: '3.44.0'
           channel: stable
           cache: true
 
-      - name: Apply implementation
-        run: |
-          python3 .github/agent-apply-ui-contracts.py
-          python3 .github/agent-fix-ui-contracts.py
+      - name: Install dependencies
+        run: flutter pub get
 
-      - name: Verify changes
-        shell: bash
+      - name: Verify pubspec.lock is up to date
+        run: git diff --exit-code -- pubspec.lock
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Test Android share pipeline
+        run: ./android/gradlew -p android :app:testDebugUnitTest --no-daemon
+
+      - name: Validate release shell syntax
         run: |
-          flutter pub get
-          git diff --exit-code -- pubspec.lock
-          dart format \
-            lib/app_theme.dart \
-            lib/main.dart \
-            lib/home_view.dart \
-            lib/photo_quota.dart \
-            lib/photo_viewer.dart \
-            test/app_theme_test.dart \
-            test/photo_quota_test.dart \
-            test/photo_viewer_test.dart
-          dart format --output=none --set-exit-if-changed \
-            lib/app_theme.dart \
-            lib/main.dart \
-            lib/home_view.dart \
-            lib/photo_quota.dart \
-            lib/photo_viewer.dart \
-            test/app_theme_test.dart \
-            test/photo_quota_test.dart \
-            test/photo_viewer_test.dart
-          flutter analyze
-          flutter test test/app_theme_test.dart test/photo_quota_test.dart test/photo_viewer_test.dart
-          flutter test
-          ./android/gradlew -p android :app:testDebugUnitTest --no-daemon
+          bash -n scripts/validate-release.sh
+          bash -n scripts/verify-release-artifacts.sh
+          bash -n test/validate_release_test.sh
+          bash -n test/verify_release_artifacts_test.sh
+          bash -n test/validate_workflow_security.sh
+          bash -n test/validate_release_ref_resolution.sh
+
+      - name: Test release validation
+        run: |
           bash test/validate_release_test.sh
           bash test/verify_release_artifacts_test.sh
+
+      - name: Validate workflow security structure
+        run: |
           bash test/validate_workflow_security.sh
           bash test/validate_release_ref_resolution.sh
-          flutter build apk --debug
-          git diff --check
 
-      - name: Commit verified changes
-        shell: bash
-        run: |
-          git config user.name 'ChatGPT Agent'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'feat: complete UI accessibility contracts [agent-applied]'
-          git push origin HEAD:agent/27-28-29-ui-contracts-20260805
+      - name: Build debug APK
+        run: flutter build apk --debug
