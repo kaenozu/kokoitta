@@ -1,0 +1,68 @@
+name: Home redesign format once
+
+on:
+  push:
+    branches:
+      - agent/85-home-map-redesign
+    paths:
+      - 'lib/app_theme.dart'
+      - 'lib/home_dashboard.dart'
+      - 'lib/home_view.dart'
+      - 'test/home_dashboard_test.dart'
+      - '.github/workflows/home-redesign-format-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/85-home-map-redesign
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Fix known quota reference and format the UI slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('lib/home_view.dart')
+          text = path.read_text(encoding='utf-8')
+          old = 'HomeDashboardQuota(count: _photoCount, limit: PhotoQuotaStatus.limit)'
+          new = 'HomeDashboardQuota(count: _photoCount, limit: _quotaStatus.limit)'
+          if old not in text:
+              raise SystemExit('Expected quota reference was not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          dart format \
+            lib/app_theme.dart \
+            lib/home_dashboard.dart \
+            lib/home_view.dart \
+            test/home_dashboard_test.dart
+          git diff --check
+          if git diff --quiet -- \
+            lib/app_theme.dart \
+            lib/home_dashboard.dart \
+            lib/home_view.dart \
+            test/home_dashboard_test.dart; then
+            echo 'No changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            lib/app_theme.dart \
+            lib/home_dashboard.dart \
+            lib/home_view.dart \
+            test/home_dashboard_test.dart
+          git commit -m 'style: format home map redesign'
+          git push origin HEAD:agent/85-home-map-redesign
