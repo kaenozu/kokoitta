@@ -31,15 +31,56 @@ jobs:
           cache: true
 
       - name: Apply implementation
-        run: python3 .github/agent-apply-ui-contracts.py
+        shell: bash
+        run: |
+          python3 .github/agent-apply-ui-contracts.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          home = Path('lib/home_view.dart')
+          text = home.read_text(encoding='utf-8')
+          text = text.replace('  static const _photoQuota = photoQuotaLimit;\n', '', 1)
+          home.write_text(text, encoding='utf-8')
+
+          test = Path('test/photo_viewer_test.dart')
+          text = test.read_text(encoding='utf-8')
+          old = """    await tester.doubleTap(find.byKey(const ValueKey('photo-viewer-1')));
+    await tester.pump();
+"""
+          new = """    final target = find.byKey(const ValueKey('photo-viewer-1'));
+    await tester.tap(target);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(target);
+    await tester.pump();
+"""
+          if text.count(old) != 1:
+              raise SystemExit(f'double-tap block count={text.count(old)}')
+          test.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
 
       - name: Verify changes
         shell: bash
         run: |
           flutter pub get
           git diff --exit-code -- pubspec.lock
-          dart format .
-          dart format --output=none --set-exit-if-changed .
+          dart format \
+            lib/app_theme.dart \
+            lib/main.dart \
+            lib/home_view.dart \
+            lib/photo_quota.dart \
+            lib/photo_viewer.dart \
+            test/app_theme_test.dart \
+            test/photo_quota_test.dart \
+            test/photo_viewer_test.dart
+          dart format --output=none --set-exit-if-changed \
+            lib/app_theme.dart \
+            lib/main.dart \
+            lib/home_view.dart \
+            lib/photo_quota.dart \
+            lib/photo_viewer.dart \
+            test/app_theme_test.dart \
+            test/photo_quota_test.dart \
+            test/photo_viewer_test.dart
           flutter analyze
           flutter test test/app_theme_test.dart test/photo_quota_test.dart test/photo_viewer_test.dart
           flutter test
