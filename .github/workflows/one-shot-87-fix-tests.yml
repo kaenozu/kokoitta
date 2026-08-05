@@ -42,17 +42,17 @@ jobs:
           text = viewer_test.read_text(encoding='utf-8')
           text = text.replace(
               "    final previous = tester.widget<IconButton>(\n      find.byTooltip('前の写真'),\n    );",
-              "    IconButton button(String tooltip) => tester.widget<IconButton>(\n      find.descendant(\n        of: find.byTooltip(tooltip),\n        matching: find.byType(IconButton),\n      ),\n    );\n    final previous = button('前の写真');",
+              "    IconButton button(IconData icon) => tester.widget<IconButton>(\n      find.ancestor(\n        of: find.byIcon(icon),\n        matching: find.byType(IconButton),\n      ).first,\n    );\n    final previous = button(Icons.chevron_left);",
               1,
           )
           text = text.replace(
               "    expect(tester.widget<IconButton>(find.byTooltip('次の写真')).onPressed, isNotNull);",
-              "    expect(button('次の写真').onPressed, isNotNull);",
+              "    expect(button(Icons.chevron_right).onPressed, isNotNull);",
               1,
           )
           text = text.replace(
               "    expect(tester.widget<IconButton>(find.byTooltip('前の写真')).onPressed, isNotNull);",
-              "    expect(button('前の写真').onPressed, isNotNull);",
+              "    expect(button(Icons.chevron_left).onPressed, isNotNull);",
               1,
           )
           viewer_test.write_text(text, encoding='utf-8')
