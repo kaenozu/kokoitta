@@ -29,7 +29,7 @@ void main() {
     List<HomeRecentTripItem> recentTrips = const <HomeRecentTripItem>[],
     HomeDashboardOperation? operation,
     String? addDisabledReason,
-    VoidCallback? onAddPhotos,
+    bool addEnabled = true,
     Brightness brightness = Brightness.light,
     double textScale = 1,
   }) {
@@ -48,7 +48,7 @@ void main() {
               recentTrips: recentTrips,
               operation: operation,
               addDisabledReason: addDisabledReason,
-              onAddPhotos: onAddPhotos ?? () {},
+              onAddPhotos: addEnabled ? () {} : null,
               onShowAllTrips: () {},
               onShowPrefectureList: () {},
               onRestoreBackup: () {},
@@ -177,7 +177,7 @@ void main() {
       buildDashboard(
         quota: const HomeDashboardQuota(count: 300, limit: 300),
         photoCount: 300,
-        onAddPhotos: null,
+        addEnabled: false,
         addDisabledReason: '処理が完了すると写真を追加できます。',
         operation: HomeDashboardOperation(
           title: '写真を追加しています',
@@ -219,9 +219,18 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.bySemanticsLabel('訪問済み1、計画中1、未訪問45、合計47都道府県'), findsWidgets);
-    expect(find.bySemanticsLabel('北海道、訪問済み。タップすると通過に変更'), findsOneWidget);
-    expect(find.bySemanticsLabel('埼玉県、通過。タップすると未訪問に変更'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('訪問済み1、計画中1、未訪問45、合計47都道府県'),
+      findsWidgets,
+    );
+    expect(
+      find.bySemanticsLabel('北海道、訪問済み。タップすると通過に変更'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsLabel('埼玉県、通過。タップすると未訪問に変更'),
+      findsOneWidget,
+    );
     semantics.dispose();
   });
 }
