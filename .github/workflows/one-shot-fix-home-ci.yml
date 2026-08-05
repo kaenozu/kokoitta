@@ -28,66 +28,51 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
+          import re
           from pathlib import Path
 
           design = Path('lib/design/kokoitta_design_system.dart')
           text = design.read_text(encoding='utf-8')
-          old = """extension KokoittaThemeContext on BuildContext {
-            KokoittaSemanticColors get kokoittaColors {
-              final colors = Theme.of(this).extension<KokoittaSemanticColors>();
-              assert(colors != null, 'KokoittaSemanticColors is missing from ThemeData.');
-              return colors!;
-            }
-          }
-          """
-          new = """extension KokoittaThemeContext on BuildContext {
+          text, count = re.subn(
+              r"extension KokoittaThemeContext on BuildContext \{\s*"
+              r"KokoittaSemanticColors get kokoittaColors \{\s*"
+              r"final colors = Theme\.of\(this\)\.extension<KokoittaSemanticColors>\(\);\s*"
+              r"assert\(colors != null, 'KokoittaSemanticColors is missing from ThemeData\.'\);\s*"
+              r"return colors!;\s*\}\s*\}",
+              """extension KokoittaThemeContext on BuildContext {
             KokoittaSemanticColors get kokoittaColors {
               final theme = Theme.of(this);
               return theme.extension<KokoittaSemanticColors>() ??
                   KokoittaSemanticColors.fromScheme(theme.colorScheme);
             }
-          }
-          """
-          if old not in text:
-              raise SystemExit('semantic color getter pattern not found')
-          design.write_text(text.replace(old, new, 1), encoding='utf-8')
+          }""",
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'semantic color getter replacements={count}')
+          design.write_text(text, encoding='utf-8')
 
           home = Path('lib/home_view.dart')
           text = home.read_text(encoding='utf-8')
-          old_progress = """        title: cancelling ? '写真の追加をキャンセルしています' : '写真を追加しています',
-                  message: cancelling
-                      ? '保存前の処理を安全に取り消しています。完了するまでお待ちください。'
-                      : '${event.processed} / ${event.total}枚を処理しています。',
-          """
-          new_progress = """        title: cancelling
-                      ? '写真の追加をキャンセルしています'
-                      : '取り込み ${event.processed} / ${event.total}',
-                  message: cancelling
-                      ? '保存前の処理を安全に取り消しています。完了するまでお待ちください。'
-                      : '写真を安全に処理しています。',
-          """
-          if old_progress not in text:
-              raise SystemExit('progress presentation pattern not found')
-          text = text.replace(old_progress, new_progress, 1)
+          text, count = re.subn(
+              r"title: cancelling \? '写真の追加をキャンセルしています' : '写真を追加しています',\s*"
+              r"message: cancelling\s*"
+              r"\? '保存前の処理を安全に取り消しています。完了するまでお待ちください。'\s*"
+              r": '\$\{event\.processed\} / \$\{event\.total\}枚を処理しています。',",
+              """title: cancelling
+                    ? '写真の追加をキャンセルしています'
+                    : '取り込み ${event.processed} / ${event.total}',
+                message: cancelling
+                    ? '保存前の処理を安全に取り消しています。完了するまでお待ちください。'
+                    : '写真を安全に処理しています。',""",
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'progress presentation replacements={count}')
 
-          old_map = """  Widget _mapView(BuildContext context) {
-            return HomeMapDashboard(
-              prefectureStates: _data.prefectureStates,
-              prefectureSummary: _homePrefectureSummary,
-              quota: HomeDashboardQuota(count: _photoCount, limit: _quotaStatus.limit),
-              photoCount: _photoCount,
-              recentTrips: _homeRecentTrips,
-              operation: _homeOperation,
-              addDisabledReason: _addDisabledReason,
-              onAddPhotos: _cannotAddPhotos ? null : _addPhotos,
-              onShowAllTrips: () => _updateState(() => _tab = 1),
-              onShowPrefectureList: _isDisabled ? null : _showPrefectureList,
-              onRestoreBackup: _isDisabled ? null : _showBackupMenu,
-              onOpenSettings: null,
-            );
-          }
-          """
-          new_map = """  Widget _mapView(BuildContext context) {
+          replacement = """  Widget _mapView(BuildContext context) {
             final operation = _homeOperation;
             return Column(
               children: <Widget>[
@@ -138,12 +123,21 @@ jobs:
               ],
             );
           }
+
           """
-          if old_map not in text:
-              raise SystemExit('map view pattern not found')
-          home.write_text(text.replace(old_map, new_map, 1), encoding='utf-8')
+          text, count = re.subn(
+              r"  Widget _mapView\(BuildContext context\) \{.*?\n  void _showPrefectureList\(\)",
+              replacement + "  void _showPrefectureList()",
+              text,
+              count=1,
+              flags=re.DOTALL,
+          )
+          if count != 1:
+              raise SystemExit(f'map view replacements={count}')
+          home.write_text(text, encoding='utf-8')
           PY
           rm .github/workflows/one-shot-fix-home-ci.yml
+          rm -f .github/workflows/full-test-failure-summary.yml
           dart format lib/design/kokoitta_design_system.dart lib/home_view.dart
       - name: Verify focused regressions
         run: |
@@ -155,6 +149,6 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add lib/design/kokoitta_design_system.dart lib/home_view.dart .github/workflows/one-shot-fix-home-ci.yml
+          git add -A
           git commit -m 'fix: keep home operations visible and theme-compatible'
           git push origin HEAD:agent/85-home-map-redesign
