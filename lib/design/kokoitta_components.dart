@@ -200,10 +200,7 @@ class KokoittaStatePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appearance = _appearance(context);
-    final actions = <Widget>[
-      if (primaryAction != null) primaryAction!,
-      if (secondaryAction != null) secondaryAction!,
-    ];
+    final actions = <Widget>[?primaryAction, ?secondaryAction];
     return Semantics(
       container: true,
       liveRegion: liveRegion,
