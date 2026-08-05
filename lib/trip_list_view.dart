@@ -28,8 +28,8 @@ class TripListItem {
     final details = <String>[
       title,
       '$photoCount枚の写真',
-      if (capturedAtLabel != null) capturedAtLabel!,
-      if (locationLabel != null) locationLabel!,
+      ?capturedAtLabel,
+      ?locationLabel,
     ];
     return '${details.join('、')}。詳細を開く';
   }
