@@ -1,94 +1,132 @@
 # AGENTS.md
 
-## 基本ルール
+このリポジトリで作業するAIエージェントと自動化担当者は、変更前に本書を確認してください。
 
-- **1 Issue = 1 Agent = 1 Branch = 1 Worktree**
-- エージェント自身が専用の Git worktree を作成して作業を行うこと。
-- 元リポジトリの作業ディレクトリ（`main` チェックアウト先など）を直接編集しないこと。
-- 他のエージェントの worktree またはブランチを編集・変更しないこと。
-- Issue の Scope（作業範囲）および変更禁止範囲（ホットスポットなど）を厳格に遵守すること。
-- 無関係なリファクタリング、コード整頓、パッケージ依存関係の更新を行わないこと。
+## 適用範囲
 
-## 作業開始前手順
+作業方法を次の2種類に分けます。
 
-1. `README.md`、`AGENTS.md`、`CONTRIBUTING.md`、および担当する Issue の本文を必ず確認する。
-2. 作業ディレクトリの状態を確認する：
-   ```bash
-   git status --short
-   ```
-3. 現在のブランチと worktree 一覧を確認する：
-   ```bash
-   git branch --show-current
-   git worktree list
-   ```
-4. 既存の実装、テスト、CI設定を確認する。
-5. 未関連の変更（未コミットの変更等）を勝手に消去・退避・巻き戻し（`reset`, `stash drop` 等）しないこと。
+### 1. ローカル作業
 
-## Worktree 作成フロー
+ローカルcloneでファイル編集、format、test、build、commit、push等を行う作業です。
 
-各エージェントは作業開始時、必ず以下の標準フローで専用 worktree を作成して移動してください。
+- **1 Issue = 1 Agent = 1 Branch = 1 Worktree**を原則とします。
+- 専用branchと専用Git worktreeを作成し、元リポジトリの作業ディレクトリ（`main`のcheckout先等）を直接編集しません。
+- 本書のworktree確認・作成・削除規則は、ローカル作業にだけ適用します。
+
+### 2. Remote-only GitHub作業
+
+GitHub API、GitHub Contents API、Pull Request API等だけを使い、ローカルclone、ローカルファイル、ローカルprocessを操作しない作業です。
+
+- **worktreeの作成・存在確認は不要です。**
+- Exact default-branch HEADまたは明示されたbase refから専用remote branchを作成します。
+- default branchへ直接commitせず、専用branchへcommitしてDraft PRを作成します。
+- ローカル差分、ローカルworktree、実行中processの状態を推測したり、remote-only作業の停止理由にしたりしません。
+- ローカル検証を実行していない場合は、その事実を明記し、GitHub ActionsのExact HEAD結果を確認します。
+- CIで安全に検証できない大規模変更、binary、生成物、秘密情報、Production操作はremote-onlyで実施しません。
+
+途中でローカルコマンドやローカルファイル操作が必要になった場合、その時点から「ローカル作業」として専用worktree規則を適用します。
+
+## 共通ルール
+
+- **1 Issue = 1 Agent = 1 Branch**を原則とします。
+- 他のエージェントのbranch、worktree、未コミット差分を変更しません。
+- IssueのScopeと変更禁止範囲を厳格に遵守します。
+- 無関係なリファクタリング、コード整頓、依存関係更新を混在させません。
+- 未確認情報を過去の会話や別担当者の記憶で補完しません。
+- default branchへの直接push、force push、履歴改変は行いません。
+
+## ローカル作業の開始前手順
+
+1. `README.md`、`AGENTS.md`、`CONTRIBUTING.md`、担当Issue本文を確認します。
+2. 対象リポジトリ、remote、branch、HEAD、差分、worktree、関連Issue・PR、実行中processを確認します。
+
+```bash
+git remote -v
+git status --short
+git branch --show-current
+git rev-parse HEAD
+git worktree list --porcelain
+```
+
+3. 既存実装、テスト、CI設定を確認します。
+4. 未関連変更を勝手に削除、stash、reset、上書き、commitしません。
+5. 同じworktreeを別セッションが使用中の場合、編集、format、test、build、commit、pushを開始しません。
+
+## Remote-only GitHub作業の開始前手順
+
+1. repositoryのdefault branch、Exact HEAD、権限、関連Issue・PRをGitHubから再取得します。
+2. 対象remote branchが既に存在しないこと、または自分の継続作業branchであることを確認します。
+3. Exact baseから専用remote branchを作成します。
+4. 変更対象ファイルの最新blob SHAと内容を取得してから更新します。
+5. 1目的・小さくレビュー可能なcommitに分け、Draft PRを作成します。
+6. GitHub Actions、status checks、diffを確認し、未実行検証を明記します。
+
+Remote-only作業では、ローカルworktreeの有無、ローカルdirty状態、ローカルprocessを確認事項やBlockerに含めません。
+
+## ローカルWorktree作成フロー
+
+ローカル作業を開始する場合だけ、以下の標準フローを使用します。
 
 ```bash
 # 1. リモート情報を更新
 git fetch origin
 
-# 2. ブランチおよび Worktree の重複がないか確認
+# 2. branchおよびworktreeの重複確認
 git branch --list agent/<issue-number>-<task-name>
 git worktree list
 
-# 3. 専用 Worktree の作成
-# Linux/macOS:
+# 3. 専用worktreeを作成
+# Linux/macOS
 git worktree add ../kokoitta-agent-<issue-number> \
   -b agent/<issue-number>-<task-name> \
   origin/main
 
-# Windows PowerShell:
+# Windows PowerShell
 git worktree add ..\kokoitta-agent-<issue-number> -b agent/<issue-number>-<task-name> origin/main
 
-# 4. 作成した Worktree へ移動
-# Linux/macOS:
+# 4. 作成したworktreeへ移動
+# Linux/macOS
 cd ../kokoitta-agent-<issue-number>
-# Windows PowerShell:
+# Windows PowerShell
 Set-Location ..\kokoitta-agent-<issue-number>
 
-# 5. 移動後の確認
+# 5. 移動後確認
 git branch --show-current
 git status --short
 ```
 
-> **注意・禁止事項:**
-> 既存の worktree やブランチが既に存在する場合、独断で削除・再作成・`git worktree remove`・`git branch -D` を行わないでください。不整合がある場合はファイルを変更せず、Coordinator または該当 Issue へ状況をコメントしてください。
+既存worktreeやbranchが存在する場合、独断で削除、再作成、`git worktree remove`、`git branch -D`を実行しません。不整合がある場合はファイルを変更せず、Coordinatorまたは該当Issueへ状況を記録します。
 
-## GitHub Projects の Status 更新ルール
+ローカル作業完了後は、統合済み、再開条件なし、未コミット差分なしを確認してから不要なworktreeを削除します。作業中または明確な再開条件があるworktreeは維持します。
 
-各エージェントは、担当 Issue の GitHub Projects における Status を以下の遷移に従って更新してください。
+## GitHub ProjectsのStatus更新
 
-### ステータス遷移ルール
-1. **Todo → In Progress**:
-   - 専用 worktree の作成およびブランチ確認が完了し、ファイル編集を開始する直前に `In Progress` へ変更する。
-   - worktree 作成とブランチ確認が完了する前に `In Progress` に変更しないこと。
-2. **In Progress → In Review**:
-   - 実装・検証・コミット・push が完了し、Draft PR を作成した直後に `In Review` へ変更する。
-3. **In Review → Done**:
-   - PR がマージされ Issue が完了した段階で `Done` となっていることを確認する。（マージ後の `Done` への変更は Coordinator または GitHub Projects の自動化で実行・確認される場合を含む）
+### Todo → In Progress
 
-### Project 操作の安全ルール
-- **プロジェクトの特定**:
-  - Project 名や Project 番号を文書内に固定値として埋め込まないこと。
-  - エージェントは以下の優先順位で対象 Project を特定する：
-    1. Issue 本文で指定された Project
-    2. Coordinator Issue #12 で指定された Project
-    3. `gh project list --owner kaenozu` で一意に確認できた Project
-  - 複数候補があり一意に判断できない場合は、推測で更新せず Coordinator へ報告すること。
-- **Project Item ID / Field ID の取り扱い**:
-  - Project Item ID、Status Field ID、Option ID などを固定値として文書へ記載しないこと。
-- **エラー時の扱い**:
-  - `gh` CLI 等で Projects を操作するには `project` スコープが必要となる。
-  - 権限不足や API エラー等で Projects の更新に失敗した場合は、成功したと虚偽報告せず、実行コマンドとエラー内容を該当 Issue へ記録・報告すること。
+- ローカル作業：専用branch・worktreeを確認し、編集開始直前に変更します。
+- Remote-only作業：Exact baseから専用remote branchを作成し、最初のremote commit直前に変更します。
+- worktreeを使用しないremote-only作業に、worktree作成をStatus変更条件として要求しません。
 
-## ホットスポット（同時編集の原則禁止）
+### In Progress → In Review
 
-以下のファイルおよびディレクトリは、複数エージェントによる同時編集を原則禁止します（競合防止のため）。
+実装、利用可能な検証、commit、push、Draft PR作成が完了した直後に変更します。未実行検証がある場合はPR本文へ明記します。
+
+### In Review → Done
+
+PRがmergeされ、Issueが完了した段階でDoneを確認します。CoordinatorまたはGitHub Projects自動化による更新を含みます。
+
+### Project操作の安全ルール
+
+- Project名や番号を固定値として埋め込みません。
+- 対象Projectは、Issue本文、Coordinator Issue #12、`gh project list --owner kaenozu`の順で特定します。
+- 複数候補がある場合は推測で更新しません。
+- Project Item ID、Field ID、Option IDを固定値として文書へ記載しません。
+- 権限不足やAPI errorを成功扱いにせず、実行内容とerrorを記録します。
+
+## ホットスポット
+
+以下は複数担当による同時編集を原則禁止します。これはローカル作業とremote-only作業の両方に適用します。
 
 - `android/**`
 - `.github/workflows/**`
@@ -100,34 +138,51 @@ git status --short
 - `pubspec.yaml`
 - `pubspec.lock`
 
-## 禁止 Git 操作
+担当branch、対象Issue、変更予定ファイルを確認し、競合が避けられない場合は直列化します。
 
-- `main` への直接 push
+## 禁止操作
+
+- `main`への直接pushまたは直接commit
 - `git reset --hard`
 - `git clean -fd`
-- Force push (`git push --force`, `git push -f`)
-- ChatGPT Coordinator の指示がない `merge` または `rebase`
-- 他エージェントのブランチの checkout
-- 他エージェントの worktree の変更
-- 未関連変更の削除
+- force push
+- Coordinatorの明示指示がないmergeまたはrebase
+- 他担当branchのcheckout・書換え・削除
+- 他担当worktreeの変更・削除
+- 未関連変更の削除、上書き、stash、commit
+- 秘密情報、privateデータ、署名鍵のcommit
+- 明示許可のないProduction、Play Console、Release、権限変更
 
 ## 品質基準
 
-- エラーや例外を握りつぶさないこと。
-- テストを skip して成功扱いにしないこと。
-- 型安全性を低下させないこと。
-- データ損失、競合、セキュリティ、境界値（エッジケース）を確認すること。
-- 機能追加・修正時には回帰テストを追加すること。
-- コミット前に formatter、静的解析、関連テスト、全体テスト、必要な build を実行すること。
-- 実行できなかった検証がある場合、それを「成功」扱いにせず明確に報告すること。
+- エラーや例外を握りつぶしません。
+- testをskipして成功扱いにしません。
+- 型安全性を低下させません。
+- データ損失、競合、security、境界値を確認します。
+- 機能追加・修正時には回帰テストを追加します。
 
-## 完了報告フォーマット
+### ローカル作業
 
-作業完了後、Issue および PR 本文へ以下の項目を報告してください。
+commit前にformatter、静的解析、関連test、全体test、必要なbuild、`git diff --check`を実行します。
+
+### Remote-only作業
+
+- ローカル検証を実行したと虚偽報告しません。
+- Draft PRのExact HEADでGitHub Actionsとstatus checksを確認します。
+- CIに必要な検証が存在しない場合は、その不足をBlockerまたはResidual Riskとして記録します。
+- CI failureは原因を確認し、自分のbranchだけを修正します。
+- 複雑な変更をCIだけで安全に検証できない場合、ローカル作業へ切り替えるまでDraftを維持します。
+
+## 完了報告
+
+IssueおよびPRへ次を記録します。
 
 1. 実施内容
 2. 主な変更ファイル
-3. 実行した検証と結果
-4. 未確認事項または残存リスク
-5. 依存 Issue への影響
-6. PR URL
+3. base branch・base HEAD・最終HEAD
+4. 実行した検証と結果
+5. 実行していない検証
+6. 未確認事項または残存リスク
+7. 依存Issueへの影響
+8. PR URL
+9. ローカル作業の場合のみ、worktreeの状態と削除・維持判断
