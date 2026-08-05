@@ -44,16 +44,22 @@ jobs:
               kind = event.get('type')
               if kind == 'testStart':
                   test = event.get('test', {})
-                  tests[test.get('id')] = test.get('name')
+                  tests[test.get('id')] = {
+                      'name': test.get('name'),
+                      'url': test.get('url'),
+                      'root_url': test.get('root_url'),
+                      'line': test.get('line'),
+                      'column': test.get('column'),
+                  }
               elif kind == 'error':
                   errors.append({
-                      'test': tests.get(event.get('testID'), str(event.get('testID'))),
+                      'test': tests.get(event.get('testID'), {'id': event.get('testID')}),
                       'error': event.get('error'),
                       'stack': event.get('stackTrace'),
                   })
               elif kind == 'testDone' and event.get('result') not in ('success', None):
                   failed.append({
-                      'test': tests.get(event.get('testID'), str(event.get('testID'))),
+                      'test': tests.get(event.get('testID'), {'id': event.get('testID')}),
                       'result': event.get('result'),
                       'hidden': event.get('hidden'),
                       'skipped': event.get('skipped'),
