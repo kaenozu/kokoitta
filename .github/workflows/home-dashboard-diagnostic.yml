@@ -1,9 +1,7 @@
 name: Home dashboard diagnostic
 
 on:
-  push:
-    branches:
-      - agent/85-home-map-redesign
+  pull_request:
     paths:
       - 'lib/home_dashboard.dart'
       - 'lib/home_view.dart'
