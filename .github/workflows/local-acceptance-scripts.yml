@@ -1,0 +1,51 @@
+name: Local acceptance script validation
+
+on:
+  pull_request:
+    paths:
+      - 'tools/local_acceptance/**'
+      - 'tools/release/**'
+      - 'docs/local-acceptance.md'
+      - '.github/workflows/local-acceptance-scripts.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'tools/local_acceptance/**'
+      - 'tools/release/**'
+      - 'docs/local-acceptance.md'
+      - '.github/workflows/local-acceptance-scripts.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  parse-powershell:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Parse all acceptance and release scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem tools/local_acceptance,tools/release -Recurse -File |
+            Where-Object { $_.Extension -in '.ps1', '.psm1' }
+          if (-not $files) { throw 'No PowerShell files found.' }
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | Format-List | Out-String | Write-Error
+              throw "PowerShell parse failed: $($file.FullName)"
+            }
+          }
+          Import-Module ./tools/local_acceptance/Acceptance.Common.psm1 -Force
+          Get-Command -Module Acceptance.Common | Out-String | Write-Host
