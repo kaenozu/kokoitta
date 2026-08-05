@@ -280,127 +280,46 @@ extension _HomeView on _HomePageState {
   };
 
   Widget _tripView() {
-    if (_data.trips.isEmpty && _data.unassignedPhotos.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(KokoittaSpacing.lg),
-          child: KokoittaStatePanel(
-            tone: KokoittaStateTone.neutral,
-            title: '旅行がありません',
-            message: '写真を追加すると、撮影日をもとに旅行の思い出をまとめられます。',
-            primaryAction: KokoittaActionButton(
-              label: '写真を追加',
-              icon: Icons.add_a_photo_outlined,
-              onPressed: _cannotAddPhotos ? null : _addPhotos,
-            ),
-          ),
-        ),
-      );
-    }
-
-    final itemCount =
-        _data.trips.length + (_data.unassignedPhotos.isEmpty ? 0 : 1);
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: itemCount,
-      itemBuilder: (context, index) {
-        if (index == 0 && _data.unassignedPhotos.isNotEmpty) {
-          return _unassignedCard();
-        }
-        final tripIndex = index - (_data.unassignedPhotos.isEmpty ? 0 : 1);
-        return _tripCard(_data.trips[tripIndex]);
-      },
+    return KokoittaTripListView(
+      items: _data.trips.map(_tripListItem).toList(growable: false),
+      unassigned: _data.unassignedPhotos.isEmpty
+          ? null
+          : _unassignedTripListItem(),
+      onAddPhotos: _cannotAddPhotos ? null : _addPhotos,
+      onRestoreBackup: _isDisabled ? null : _showBackupMenu,
+      disabledReason: _cannotAddPhotos ? _addDisabledReason : null,
     );
   }
 
-  Widget _unassignedCard() {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: _showUnassignedPhotos,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            SizedBox(
-              height: 150,
-              width: double.infinity,
-              child: _photoPreview(_data.unassignedPhotos),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: <Widget>[
-                  const Expanded(
-                    child: Text(
-                      '旅行未設定',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  Text('${_data.unassignedPhotos.length}枚'),
-                ],
-              ),
-            ),
-          ],
-        ),
+  TripListItem _tripListItem(Trip trip) {
+    return TripListItem(
+      title: trip.title,
+      photoCount: trip.photos.length,
+      capturedAtLabel: formatTripCapturedAt(trip.photos),
+      locationLabel: formatTripLocations(trip.photos),
+      image: _photoPreview(trip.photos),
+      onTap: () => _showTrip(trip),
+      overflow: PopupMenuButton<String>(
+        enabled: !_isDisabled,
+        tooltip: '${trip.title}の管理メニュー',
+        onSelected: (value) => _handleTripMenu(trip, value),
+        itemBuilder: (_) => const <PopupMenuEntry<String>>[
+          PopupMenuItem(value: 'move', child: Text('旅行未設定へ移動')),
+          PopupMenuItem(value: 'delete', child: Text('写真も削除')),
+        ],
       ),
     );
   }
 
-  Widget _tripCard(Trip trip) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => _showTrip(trip),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            SizedBox(
-              height: 150,
-              width: double.infinity,
-              child: _photoPreview(trip.photos),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Text(
-                          trip.title,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${trip.photos.length}枚の思い出',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
-                    ),
-                  ),
-                  PopupMenuButton<String>(
-                    enabled: !_isDisabled,
-                    onSelected: (value) => _handleTripMenu(trip, value),
-                    itemBuilder: (_) => const <PopupMenuEntry<String>>[
-                      PopupMenuItem(value: 'move', child: Text('旅行未設定へ移動')),
-                      PopupMenuItem(value: 'delete', child: Text('写真も削除')),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+  TripListItem _unassignedTripListItem() {
+    return TripListItem(
+      title: '旅行未設定',
+      photoCount: _data.unassignedPhotos.length,
+      capturedAtLabel: formatTripCapturedAt(_data.unassignedPhotos),
+      locationLabel: formatTripLocations(_data.unassignedPhotos),
+      image: _photoPreview(_data.unassignedPhotos),
+      onTap: _showUnassignedPhotos,
+      badge: const Chip(label: Text('整理できます')),
     );
   }
 
