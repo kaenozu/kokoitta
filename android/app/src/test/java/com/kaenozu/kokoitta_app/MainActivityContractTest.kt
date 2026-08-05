@@ -43,4 +43,14 @@ class MainActivityContractTest {
         assertNull(intent.action)
         assertTrue(!intent.hasExtra(Intent.EXTRA_STREAM))
     }
+
+    @Test
+    fun productionExtensionContractRejectsUnsupportedFormats() {
+        val activity = MainActivity()
+        assertEquals("jpg", activity.resolveExtension("image/jpeg", "photo.bin"))
+        assertEquals("png", activity.resolveExtension(null, "photo.PNG"))
+        assertNull(activity.resolveExtension("image/svg+xml", "photo.svg"))
+        assertNull(activity.resolveExtension("image/tiff", "photo.tiff"))
+        assertNull(activity.resolveExtension("image/x-icon", "photo.ico"))
+    }
 }
