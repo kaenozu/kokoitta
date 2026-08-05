@@ -51,6 +51,22 @@ For an AAB, also pass `-BundletoolJar`. The verifier checks the SHA-256, applica
 
 The script never reads or reports keystore passwords or secret values.
 
+## Play Console handoff
+
+After signing the exact AAB, generate a deterministic handoff package:
+
+```powershell
+pwsh ./tools/release/New-PlayConsoleHandoff.ps1 `
+  -AabPath C:\release\app-release.aab `
+  -ExpectedApplicationId com.kaenozu.kokoitta_app `
+  -ExpectedVersionName 1.0.0 `
+  -ExpectedVersionCode 1 `
+  -BundletoolJar C:\tools\bundletool.jar `
+  -ReleaseNotesPath C:\release\release-notes-ja.txt
+```
+
+The handoff contains the verified SHA-256, application ID, version metadata, copied release notes, and the remaining privileged upload checklist. Keystore material and passwords are never copied. The only remaining Play operations are choosing the target app/track/rollout, uploading the exact verified AAB, reviewing policy/device-test warnings, and approving rollout.
+
 ## Combined acceptance
 
 `Invoke-AllLocalAcceptance.ps1` coordinates kokoitta, kurashilog, and privacy_stamp repositories sequentially. It is installed in this repository because it already owns the shared Android acceptance environment. Supply the three repository paths and the two private input paths. The aggregate report contains child report locations and outcomes, not private file paths or contents.
