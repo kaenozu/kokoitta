@@ -1,0 +1,29 @@
+name: Home dashboard diagnostic
+
+on:
+  push:
+    branches:
+      - agent/85-home-map-redesign
+    paths:
+      - 'lib/home_dashboard.dart'
+      - 'lib/home_view.dart'
+      - 'test/home_dashboard_test.dart'
+      - '.github/workflows/home-dashboard-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  home-dashboard-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter test test/home_dashboard_test.dart --reporter expanded
