@@ -28,68 +28,69 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
+          import re
           from pathlib import Path
 
           widget = Path('test/widget_test.dart')
           text = widget.read_text(encoding='utf-8')
-          old = """    final addPhotoButton = find.ancestor(
-              of: find.byTooltip('写真を追加').first,
-              matching: find.byType(IconButton),
-            );
-            expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNull);
-          """
-          new = """    final addPhotoButton = find.widgetWithText(
-              FilledButton,
-              '写真を追加',
-            );
-            expect(tester.widget<FilledButton>(addPhotoButton).onPressed, isNull);
-          """
-          if old not in text:
-              raise SystemExit('disabled photo CTA assertion pattern not found')
-          text = text.replace(old, new, 1)
-          old = """    final reenabledAddPhotoButton = find.ancestor(
-              of: find.byTooltip('写真を追加').first,
-              matching: find.byType(IconButton),
-            );
-            expect(
-              tester.widget<IconButton>(reenabledAddPhotoButton).onPressed,
-              isNotNull,
-            );
-          """
-          new = """    final reenabledAddPhotoButton = find.widgetWithText(
-              FilledButton,
-              '写真を追加',
-            );
-            expect(
-              tester.widget<FilledButton>(reenabledAddPhotoButton).onPressed,
-              isNotNull,
-            );
-          """
-          if old not in text:
-              raise SystemExit('reenabled photo CTA assertion pattern not found')
-          widget.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text, count = re.subn(
+              r"final addPhotoButton = find\.ancestor\(\s*"
+              r"of: find\.byTooltip\('写真を追加'\)\.first,\s*"
+              r"matching: find\.byType\(IconButton\),\s*\);\s*"
+              r"expect\(tester\.widget<IconButton>\(addPhotoButton\)\.onPressed, isNull\);",
+              """final addPhotoButton = find.widgetWithText(
+                FilledButton,
+                '写真を追加',
+              );
+              expect(tester.widget<FilledButton>(addPhotoButton).onPressed, isNull);""",
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'disabled CTA replacements={count}')
+          text, count = re.subn(
+              r"final reenabledAddPhotoButton = find\.ancestor\(\s*"
+              r"of: find\.byTooltip\('写真を追加'\)\.first,\s*"
+              r"matching: find\.byType\(IconButton\),\s*\);\s*"
+              r"expect\(\s*tester\.widget<IconButton>\(reenabledAddPhotoButton\)\.onPressed,\s*"
+              r"isNotNull,\s*\);",
+              """final reenabledAddPhotoButton = find.widgetWithText(
+                FilledButton,
+                '写真を追加',
+              );
+              expect(
+                tester.widget<FilledButton>(reenabledAddPhotoButton).onPressed,
+                isNotNull,
+              );""",
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'reenabled CTA replacements={count}')
+          widget.write_text(text, encoding='utf-8')
 
           dashboard = Path('test/home_dashboard_test.dart')
           text = dashboard.read_text(encoding='utf-8')
-          old = """          builder: (context) => ColoredBox(
-                    color: context.kokoittaColors.successContainer,
-                    child: const SizedBox.expand(),
-                  ),
-          """
-          new = """          builder: (context) => ColoredBox(
-                    key: const ValueKey<String>('semantic-color-fallback'),
-                    color: context.kokoittaColors.successContainer,
-                    child: const SizedBox.expand(),
-                  ),
-          """
-          if old not in text:
-              raise SystemExit('semantic fallback fixture pattern not found')
-          text = text.replace(old, new, 1)
-          old = "expect(find.byType(ColoredBox), findsOneWidget);"
-          new = "expect(find.byKey(const ValueKey<String>('semantic-color-fallback')), findsOneWidget);"
-          if old not in text:
-              raise SystemExit('semantic fallback finder pattern not found')
-          dashboard.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text, count = re.subn(
+              r"builder: \(context\) => ColoredBox\(\s*"
+              r"color: context\.kokoittaColors\.successContainer,",
+              """builder: (context) => ColoredBox(
+                key: const ValueKey<String>('semantic-color-fallback'),
+                color: context.kokoittaColors.successContainer,""",
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'semantic fixture replacements={count}')
+          text, count = re.subn(
+              r"expect\(find\.byType\(ColoredBox\), findsOneWidget\);",
+              "expect(find.byKey(const ValueKey<String>('semantic-color-fallback')), findsOneWidget);",
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'semantic finder replacements={count}')
+          dashboard.write_text(text, encoding='utf-8')
           PY
           rm .github/workflows/one-shot-update-home-regression-tests.yml
           dart format test/widget_test.dart test/home_dashboard_test.dart
