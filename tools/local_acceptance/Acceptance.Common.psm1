@@ -119,8 +119,7 @@ function ConvertFrom-PendingDeletionManifestXml {
 function Test-AppPathExists {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Serial, [Parameter(Mandatory)][string]$PackageName, [Parameter(Mandatory)][string]$Path)
-    $escaped = $Path.Replace("'", "'\"'\"'")
-    $result = Invoke-Adb -Serial $Serial -Arguments @('shell', 'run-as', $PackageName, 'sh', '-c', "test -e '$escaped'") -AllowFailure
+    $result = Invoke-Adb -Serial $Serial -Arguments @('shell', 'run-as', $PackageName, 'sh', '-c', 'test -e "$1"', 'sh', $Path) -AllowFailure
     return $result.ExitCode -eq 0
 }
 
