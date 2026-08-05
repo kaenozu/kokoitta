@@ -1,9 +1,9 @@
 name: One-shot integrate trip list
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/86-trip-list-redesign
+      - agent/85-home-map-redesign
     paths:
       - '.github/workflows/one-shot-86-integrate-trip-list.yml'
 
