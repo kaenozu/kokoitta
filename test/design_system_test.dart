@@ -172,27 +172,29 @@ void main() {
       MaterialApp(
         theme: buildKokoittaTheme(Brightness.light),
         home: Scaffold(
-          body: Column(
-            children: [
-              const KokoittaSectionHeader(title: '旅行'),
-              KokoittaStatePanel(
-                tone: KokoittaStateTone.progress,
-                title: '写真を追加しています',
-                message: '2 / 4枚',
-                liveRegion: true,
-                busy: true,
-              ),
-              KokoittaTripSummaryCard(
-                title: '夏休み',
-                semanticLabel: '旅行、夏休み、写真4枚、開く',
-                onTap: () {},
-              ),
-              KokoittaSemanticIconButton(
-                icon: Icons.settings_outlined,
-                label: '設定を開く',
-                onPressed: () {},
-              ),
-            ],
+          body: SingleChildScrollView(
+            child: Column(
+              children: [
+                const KokoittaSectionHeader(title: '旅行'),
+                KokoittaStatePanel(
+                  tone: KokoittaStateTone.progress,
+                  title: '写真を追加しています',
+                  message: '2 / 4枚',
+                  liveRegion: true,
+                  busy: true,
+                ),
+                KokoittaTripSummaryCard(
+                  title: '夏休み',
+                  semanticLabel: '旅行、夏休み、写真4枚、開く',
+                  onTap: () {},
+                ),
+                KokoittaSemanticIconButton(
+                  icon: Icons.settings_outlined,
+                  label: '設定を開く',
+                  onPressed: () {},
+                ),
+              ],
+            ),
           ),
         ),
       ),
