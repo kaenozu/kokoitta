@@ -84,6 +84,9 @@ if changed != 1:
     raise SystemExit(f'normalization line count={changed}')
 verifier.write_text('\n'.join(verifier_lines) + '\n', encoding='utf-8')
 
+readme = Path('README.md')
+readme.write_text(readme.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
+
 staged_path.unlink(missing_ok=True)
 Path('.agent-trigger-46').unlink(missing_ok=True)
 Path(__file__).unlink(missing_ok=True)
