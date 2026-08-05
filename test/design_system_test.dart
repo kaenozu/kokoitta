@@ -217,6 +217,9 @@ void main() {
         isEnabled: true,
       ),
     );
+
+    await tester.ensureVisible(find.byType(KokoittaSemanticIconButton));
+    await tester.pump();
     expect(
       tester.getSemantics(find.byType(KokoittaSemanticIconButton)),
       matchesSemantics(
