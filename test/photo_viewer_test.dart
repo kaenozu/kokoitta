@@ -24,7 +24,7 @@ void main() {
   testWidgets('opens requested page and follows PageView navigation', (
     tester,
   ) async {
-    final photos = [
+    final photos = <Photo>[
       Photo.fromFile(File('/virtual/first.jpg'), id: 'first'),
       Photo.fromFile(File('/virtual/second.jpg'), id: 'second'),
     ];
@@ -46,12 +46,18 @@ void main() {
     expect(find.text('写真 1 / 2'), findsOneWidget);
   });
 
-  testWidgets('double-tap callback toggles zoom and reset', (tester) async {
-    final photo = Photo.fromFile(File('/virtual/photo.jpg'), id: 'photo');
+  testWidgets('previous and next controls are explicit alternatives to swipe', (
+    tester,
+  ) async {
+    final photos = <Photo>[
+      Photo.fromFile(File('/virtual/first.jpg'), id: 'first'),
+      Photo.fromFile(File('/virtual/second.jpg'), id: 'second'),
+      Photo.fromFile(File('/virtual/third.jpg'), id: 'third'),
+    ];
     await tester.pumpWidget(
       MaterialApp(
         home: PhotoViewer(
-          photos: [photo],
+          photos: photos,
           initialIndex: 0,
           imageBuilder: _memoryFreeImage,
         ),
@@ -59,7 +65,58 @@ void main() {
     );
     await tester.pump();
 
-    final target = find.byKey(const ValueKey('photo-viewer-0'));
+    final previous = tester.widget<IconButton>(
+      find.byTooltip('前の写真'),
+    );
+    expect(previous.onPressed, isNull);
+    expect(tester.widget<IconButton>(find.byTooltip('次の写真')).onPressed, isNotNull);
+
+    await tester.tap(find.byTooltip('次の写真'));
+    await tester.pumpAndSettle();
+    expect(find.text('写真 2 / 3'), findsOneWidget);
+    expect(tester.widget<IconButton>(find.byTooltip('前の写真')).onPressed, isNotNull);
+  });
+
+  testWidgets('share and delete receive only the current photo', (tester) async {
+    final first = Photo.fromFile(File('/virtual/first.jpg'), id: 'first');
+    final second = Photo.fromFile(File('/virtual/second.jpg'), id: 'second');
+    Photo? shared;
+    Photo? deleted;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PhotoViewer(
+          title: '旅行A',
+          photos: <Photo>[first, second],
+          initialIndex: 1,
+          imageBuilder: _memoryFreeImage,
+          onShare: (photo) => shared = photo,
+          onDelete: (photo) => deleted = photo,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('現在の写真を共有'));
+    await tester.tap(find.byTooltip('現在の写真を削除'));
+    expect(shared?.id, 'second');
+    expect(deleted?.id, 'second');
+    expect(find.bySemanticsLabel('写真 2 / 2'), findsOneWidget);
+  });
+
+  testWidgets('double-tap callback toggles zoom and reset', (tester) async {
+    final photo = Photo.fromFile(File('/virtual/photo.jpg'), id: 'photo');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PhotoViewer(
+          photos: <Photo>[photo],
+          initialIndex: 0,
+          imageBuilder: _memoryFreeImage,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final target = find.byKey(const ValueKey<String>('photo-viewer-0'));
     InteractiveViewer current() => tester.widget<InteractiveViewer>(target);
     GestureDetector gesture() => tester.widget<GestureDetector>(
       find.ancestor(of: target, matching: find.byType(GestureDetector)).first,
@@ -85,7 +142,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: PhotoViewer(
-          photos: [photo],
+          photos: <Photo>[photo],
           initialIndex: 0,
           imageBuilder: (_, _, _, _) => const PhotoLoadFallback(),
         ),
@@ -94,5 +151,9 @@ void main() {
     await tester.pump();
     expect(find.text('写真を表示できません'), findsOneWidget);
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('写真を表示できません。戻る操作は利用できます'),
+      findsOneWidget,
+    );
   });
 }
