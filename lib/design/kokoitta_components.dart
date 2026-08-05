@@ -19,10 +19,12 @@ class KokoittaActionButton extends StatelessWidget {
   final IconData? icon;
   final KokoittaActionEmphasis emphasis;
 
-  Widget _content(BuildContext context) {
+  Widget _content() {
     final children = <Widget>[
       if (icon != null)
-        Icon(icon, size: KokoittaSize.icon, excludeFromSemantics: true),
+        ExcludeSemantics(
+          child: Icon(icon, size: KokoittaSize.icon),
+        ),
       Text(label, textAlign: TextAlign.center),
     ];
     return Wrap(
@@ -39,11 +41,11 @@ class KokoittaActionButton extends StatelessWidget {
     return switch (emphasis) {
       KokoittaActionEmphasis.primary => FilledButton(
         onPressed: onPressed,
-        child: _content(context),
+        child: _content(),
       ),
       KokoittaActionEmphasis.secondary => OutlinedButton(
         onPressed: onPressed,
-        child: _content(context),
+        child: _content(),
       ),
       KokoittaActionEmphasis.destructive => OutlinedButton(
         onPressed: onPressed,
@@ -51,7 +53,7 @@ class KokoittaActionButton extends StatelessWidget {
           foregroundColor: Theme.of(context).colorScheme.error,
           side: BorderSide(color: Theme.of(context).colorScheme.error),
         ),
-        child: _content(context),
+        child: _content(),
       ),
     };
   }
@@ -468,12 +470,14 @@ class KokoittaSemanticIconButton extends StatelessWidget {
       label: label,
       child: Tooltip(
         message: label,
+        excludeFromSemantics: true,
         child: SizedBox.square(
           dimension: KokoittaSize.minimumTapTarget,
-          child: IconButton(
-            onPressed: onPressed,
-            icon: Icon(icon),
-            excludeFromSemantics: true,
+          child: ExcludeSemantics(
+            child: IconButton(
+              onPressed: onPressed,
+              icon: Icon(icon),
+            ),
           ),
         ),
       ),
