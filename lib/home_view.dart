@@ -33,10 +33,12 @@ extension _HomeView on _HomePageState {
     if (event != null && !event.isTerminal) {
       final cancelling = event.phase == ImportPhase.cancelled;
       return HomeDashboardOperation(
-        title: cancelling ? '写真の追加をキャンセルしています' : '写真を追加しています',
+        title: cancelling
+            ? '写真の追加をキャンセルしています'
+            : '取り込み ${event.processed} / ${event.total}',
         message: cancelling
             ? '保存前の処理を安全に取り消しています。完了するまでお待ちください。'
-            : '${event.processed} / ${event.total}枚を処理しています。',
+            : '写真を安全に処理しています。',
         processed: event.processed,
         total: event.total,
         onCancel: cancelling ? null : _cancelImport,
@@ -147,19 +149,52 @@ extension _HomeView on _HomePageState {
   }
 
   Widget _mapView(BuildContext context) {
-    return HomeMapDashboard(
-      prefectureStates: _data.prefectureStates,
-      prefectureSummary: _homePrefectureSummary,
-      quota: HomeDashboardQuota(count: _photoCount, limit: _quotaStatus.limit),
-      photoCount: _photoCount,
-      recentTrips: _homeRecentTrips,
-      operation: _homeOperation,
-      addDisabledReason: _addDisabledReason,
-      onAddPhotos: _cannotAddPhotos ? null : _addPhotos,
-      onShowAllTrips: () => _updateState(() => _tab = 1),
-      onShowPrefectureList: _isDisabled ? null : _showPrefectureList,
-      onRestoreBackup: _isDisabled ? null : _showBackupMenu,
-      onOpenSettings: null,
+    final operation = _homeOperation;
+    return Column(
+      children: <Widget>[
+        if (operation != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              KokoittaSpacing.md,
+              KokoittaSpacing.sm,
+              KokoittaSpacing.md,
+              0,
+            ),
+            child: KokoittaStatePanel(
+              tone: KokoittaStateTone.progress,
+              title: operation.title,
+              message: operation.message,
+              progress: operation.progress,
+              busy: true,
+              liveRegion: true,
+              secondaryAction: operation.onCancel == null
+                  ? null
+                  : KokoittaActionButton(
+                      label: 'キャンセル',
+                      emphasis: KokoittaActionEmphasis.secondary,
+                      onPressed: operation.onCancel,
+                    ),
+            ),
+          ),
+        Expanded(
+          child: HomeMapDashboard(
+            prefectureStates: _data.prefectureStates,
+            prefectureSummary: _homePrefectureSummary,
+            quota: HomeDashboardQuota(
+              count: _photoCount,
+              limit: _quotaStatus.limit,
+            ),
+            photoCount: _photoCount,
+            recentTrips: _homeRecentTrips,
+            addDisabledReason: _addDisabledReason,
+            onAddPhotos: _cannotAddPhotos ? null : _addPhotos,
+            onShowAllTrips: () => _updateState(() => _tab = 1),
+            onShowPrefectureList: _isDisabled ? null : _showPrefectureList,
+            onRestoreBackup: _isDisabled ? null : _showBackupMenu,
+            onOpenSettings: null,
+          ),
+        ),
+      ],
     );
   }
 
