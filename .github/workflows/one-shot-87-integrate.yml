@@ -1,0 +1,115 @@
+name: One-shot integrate trip detail redesign
+
+on:
+  pull_request:
+    branches:
+      - agent/86-trip-list-redesign
+    paths:
+      - '.github/workflows/one-shot-87-integrate.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: agent/87-trip-photo-viewer-redesign
+          fetch-depth: 0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
+      - name: Integrate the full-screen trip detail
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('lib/main.dart')
+          text = main.read_text(encoding='utf-8')
+          marker = "import 'trip_store.dart';\n"
+          if "import 'trip_detail_view.dart';" not in text:
+              text = text.replace(marker, marker + "import 'trip_detail_view.dart';\n", 1)
+          main.write_text(text, encoding='utf-8')
+
+          home = Path('lib/home_view.dart')
+          text = home.read_text(encoding='utf-8')
+          start = text.index('  void _showTrip(Trip trip) {')
+          end = text.index('  void _showUnassignedPhotos() {', start)
+          replacement = '''  void _showTrip(Trip trip) {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (detailContext) => TripDetailView(
+                  title: trip.title,
+                  photos: trip.photos,
+                  capturedAtLabel: formatTripCapturedAt(trip.photos),
+                  locationLabel: formatTripLocations(trip.photos),
+                  busyMessage: _isDisabled
+                      ? (_addDisabledReason ?? '安全な処理が完了するまで操作をお待ちください。')
+                      : null,
+                  onPhotoTap: (index) => _showTripPhotoViewer(trip, index),
+                  onShare: trip.photos.isEmpty
+                      ? null
+                      : () => _shareFiles(trip.photos, trip.title),
+                  onAddPhotos: _cannotAddPhotos
+                      ? null
+                      : () {
+                          Navigator.pop(detailContext);
+                          _addPhotos(tripId: trip.id);
+                        },
+                  onMoveToUnassigned: _isDisabled
+                      ? null
+                      : () {
+                          Navigator.pop(detailContext);
+                          _handleTripMenu(trip, 'move');
+                        },
+                  onDelete: _isDisabled
+                      ? null
+                      : () {
+                          Navigator.pop(detailContext);
+                          _handleTripMenu(trip, 'delete');
+                        },
+                ),
+              ),
+            );
+          }
+
+          void _showTripPhotoViewer(Trip trip, int initialIndex) {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                fullscreenDialog: true,
+                builder: (_) => PhotoViewer(
+                  title: trip.title,
+                  photos: trip.photos,
+                  initialIndex: initialIndex,
+                  onShare: (photo) => _shareFiles(<Photo>[photo], trip.title),
+                ),
+              ),
+            );
+          }
+
+'''
+          home.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
+          PY
+          rm .github/workflows/one-shot-87-integrate.yml
+          dart format \
+            lib/main.dart \
+            lib/home_view.dart \
+            lib/trip_detail_view.dart \
+            lib/photo_viewer.dart \
+            test/trip_detail_view_test.dart \
+            test/photo_viewer_test.dart
+          flutter pub get
+          flutter test test/trip_detail_view_test.dart test/photo_viewer_test.dart
+          git diff --check
+      - name: Commit integrated implementation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: integrate the full-screen trip detail experience'
+          git push origin HEAD:agent/87-trip-photo-viewer-redesign
