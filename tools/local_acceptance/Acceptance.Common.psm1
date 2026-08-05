@@ -133,7 +133,7 @@ function Get-AppCrashSummary {
 function Write-AcceptanceReport {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][hashtable]$Report,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Report,
         [Parameter(Mandatory)][string]$RunDirectory
     )
     $jsonPath = Join-Path $RunDirectory 'report.json'
