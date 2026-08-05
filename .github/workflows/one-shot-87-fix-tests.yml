@@ -1,0 +1,79 @@
+name: One-shot validate trip detail regressions
+
+on:
+  pull_request:
+    branches:
+      - agent/86-trip-list-redesign
+    paths:
+      - '.github/workflows/one-shot-87-fix-tests.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: agent/87-trip-photo-viewer-redesign
+          fetch-depth: 0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
+      - name: Fix test interaction contracts
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          detail = Path('lib/trip_detail_view.dart')
+          text = detail.read_text(encoding='utf-8')
+          text = text.replace(
+              "      appBar: AppBar(\n        title: Text(title),",
+              "      appBar: AppBar(\n        leading: BackButton(onPressed: () => Navigator.maybePop(context)),\n        title: Text(title),",
+              1,
+          )
+          detail.write_text(text, encoding='utf-8')
+
+          viewer_test = Path('test/photo_viewer_test.dart')
+          text = viewer_test.read_text(encoding='utf-8')
+          text = text.replace(
+              "    final previous = tester.widget<IconButton>(\n      find.byTooltip('前の写真'),\n    );",
+              "    IconButton button(String tooltip) => tester.widget<IconButton>(\n      find.descendant(\n        of: find.byTooltip(tooltip),\n        matching: find.byType(IconButton),\n      ),\n    );\n    final previous = button('前の写真');",
+              1,
+          )
+          text = text.replace(
+              "    expect(tester.widget<IconButton>(find.byTooltip('次の写真')).onPressed, isNotNull);",
+              "    expect(button('次の写真').onPressed, isNotNull);",
+              1,
+          )
+          text = text.replace(
+              "    expect(tester.widget<IconButton>(find.byTooltip('前の写真')).onPressed, isNotNull);",
+              "    expect(button('前の写真').onPressed, isNotNull);",
+              1,
+          )
+          viewer_test.write_text(text, encoding='utf-8')
+
+          detail_test = Path('test/trip_detail_view_test.dart')
+          text = detail_test.read_text(encoding='utf-8')
+          marker = "  testWidgets('busy state explains disabled add while management stays explicit',"
+          start = text.index(marker)
+          settle = text.index('    await tester.pumpAndSettle();', start)
+          text = text[:settle] + '    await tester.pump();' + text[settle + len('    await tester.pumpAndSettle();'):]
+          detail_test.write_text(text, encoding='utf-8')
+          PY
+          rm .github/workflows/one-shot-87-fix-tests.yml
+          dart format lib/trip_detail_view.dart test/photo_viewer_test.dart test/trip_detail_view_test.dart
+          flutter pub get
+          flutter test test/photo_viewer_test.dart test/trip_detail_view_test.dart
+          git diff --check
+      - name: Commit validated fixes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'test: validate trip detail navigation contracts'
+          git push origin HEAD:agent/87-trip-photo-viewer-redesign
