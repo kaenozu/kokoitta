@@ -63,7 +63,7 @@ class HomeDashboardQuota {
   final int limit;
 
   bool get reached => count >= limit;
-  int get remaining => (limit - count).clamp(0, limit);
+  int get remaining => count < limit ? limit - count : 0;
 }
 
 @immutable
@@ -172,6 +172,7 @@ class HomeMapDashboard extends StatelessWidget {
   }
 
   Widget _buildMapColumn(BuildContext context) {
+    final activeOperation = operation;
     final supportingText = _isEmpty
         ? '写真を追加すると、日本地図と旅の思い出が端末の中で育ちます。'
         : '日本地図で旅の広がりを確認し、思い出の写真へ戻れます。';
@@ -196,9 +197,11 @@ class HomeMapDashboard extends StatelessWidget {
         Card(
           child: Padding(
             padding: const EdgeInsets.all(KokoittaSpacing.sm),
-            child: OfflineJapanMap(
-              states: prefectureStates,
-              semanticSummary: prefectureSummary.semanticLabel,
+            child: Semantics(
+              container: true,
+              explicitChildNodes: true,
+              label: prefectureSummary.semanticLabel,
+              child: OfflineJapanMap(states: prefectureStates),
             ),
           ),
         ),
@@ -276,21 +279,21 @@ class HomeMapDashboard extends StatelessWidget {
             children: stateActions,
           ),
         ],
-        if (operation != null) ...[
+        if (activeOperation != null) ...[
           const SizedBox(height: KokoittaSpacing.md),
           KokoittaStatePanel(
             tone: KokoittaStateTone.progress,
-            title: operation!.title,
-            message: operation!.message,
-            progress: operation!.progress,
+            title: activeOperation.title,
+            message: activeOperation.message,
+            progress: activeOperation.progress,
             busy: true,
             liveRegion: true,
-            secondaryAction: operation!.onCancel == null
+            secondaryAction: activeOperation.onCancel == null
                 ? null
                 : KokoittaActionButton(
                     label: 'キャンセル',
                     emphasis: KokoittaActionEmphasis.secondary,
-                    onPressed: operation!.onCancel,
+                    onPressed: activeOperation.onCancel,
                   ),
           ),
         ],
