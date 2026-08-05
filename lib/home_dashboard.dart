@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'app_theme.dart';
+import 'design/kokoitta_components.dart';
+import 'design/kokoitta_design_system.dart';
 import 'offline_japan_map.dart';
 
 @immutable
