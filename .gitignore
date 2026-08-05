@@ -15,3 +15,9 @@ android/app/*.keystore
 *.iml
 .idea/
 .vscode/
+
+# Local acceptance evidence may contain private device metadata.
+.acceptance/
+acceptance-results/
+*.private-input.json
+*.private-input.zip
