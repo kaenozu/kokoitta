@@ -65,19 +65,24 @@ void main() {
     );
     await tester.pump();
 
-    final previous = tester.widget<IconButton>(
-      find.byTooltip('前の写真'),
+    IconButton button(IconData icon) => tester.widget<IconButton>(
+      find
+          .ancestor(of: find.byIcon(icon), matching: find.byType(IconButton))
+          .first,
     );
+    final previous = button(Icons.chevron_left);
     expect(previous.onPressed, isNull);
-    expect(tester.widget<IconButton>(find.byTooltip('次の写真')).onPressed, isNotNull);
+    expect(button(Icons.chevron_right).onPressed, isNotNull);
 
     await tester.tap(find.byTooltip('次の写真'));
     await tester.pumpAndSettle();
     expect(find.text('写真 2 / 3'), findsOneWidget);
-    expect(tester.widget<IconButton>(find.byTooltip('前の写真')).onPressed, isNotNull);
+    expect(button(Icons.chevron_left).onPressed, isNotNull);
   });
 
-  testWidgets('share and delete receive only the current photo', (tester) async {
+  testWidgets('share and delete receive only the current photo', (
+    tester,
+  ) async {
     final first = Photo.fromFile(File('/virtual/first.jpg'), id: 'first');
     final second = Photo.fromFile(File('/virtual/second.jpg'), id: 'second');
     Photo? shared;
@@ -151,9 +156,6 @@ void main() {
     await tester.pump();
     expect(find.text('写真を表示できません'), findsOneWidget);
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
-    expect(
-      find.bySemanticsLabel('写真を表示できません。戻る操作は利用できます'),
-      findsOneWidget,
-    );
+    expect(find.bySemanticsLabel('写真を表示できません。戻る操作は利用できます'), findsOneWidget);
   });
 }

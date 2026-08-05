@@ -34,6 +34,7 @@ class TripDetailView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: BackButton(onPressed: () => Navigator.maybePop(context)),
         title: Text(title),
         actions: <Widget>[
           PopupMenuButton<_TripDetailAction>(
@@ -73,7 +74,9 @@ class TripDetailView extends StatelessWidget {
                   ),
                   title: Text(
                     '写真も削除',
-                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
                   ),
                 ),
               ),

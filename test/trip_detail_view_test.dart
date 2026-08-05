@@ -28,13 +28,13 @@ void main() {
     expect(find.byType(BackButton), findsOneWidget);
   });
 
-  testWidgets('grid tiles expose trip title position and total', (tester) async {
+  testWidgets('grid tiles expose trip title position and total', (
+    tester,
+  ) async {
     final photos = List<Photo>.generate(
       4,
-      (index) => Photo.fromFile(
-        File('/virtual/photo-$index.jpg'),
-        id: 'photo-$index',
-      ),
+      (index) =>
+          Photo.fromFile(File('/virtual/photo-$index.jpg'), id: 'photo-$index'),
     );
     int? tapped;
     await tester.pumpWidget(
@@ -51,10 +51,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.bySemanticsLabel('春の旅行の写真 1 / 4。拡大表示'),
-      findsOneWidget,
-    );
+    expect(find.bySemanticsLabel('春の旅行の写真 1 / 4。拡大表示'), findsOneWidget);
     await tester.tap(find.bySemanticsLabel('春の旅行の写真 2 / 4。拡大表示'));
     expect(tapped, 1);
     expect(find.textContaining('4枚の写真'), findsOneWidget);
@@ -87,36 +84,40 @@ void main() {
     await tester.pumpAndSettle();
 
     final grid = tester.widget<SliverGrid>(find.byType(SliverGrid));
-    final delegate = grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
+    final delegate =
+        grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
     expect(delegate.crossAxisCount, 2);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('busy state explains disabled add while management stays explicit', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildKokoittaTheme(Brightness.light),
-        home: TripDetailView(
-          title: '旅行A',
-          photos: const <Photo>[],
-          onPhotoTap: (_) {},
-          busyMessage: '削除処理を確認しています。',
-          onAddPhotos: null,
-          onShare: () {},
-          onMoveToUnassigned: () {},
-          onDelete: () {},
+  testWidgets(
+    'busy state explains disabled add while management stays explicit',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildKokoittaTheme(Brightness.light),
+          home: TripDetailView(
+            title: '旅行A',
+            photos: const <Photo>[],
+            onPhotoTap: (_) {},
+            busyMessage: '削除処理を確認しています。',
+            onAddPhotos: null,
+            onShare: () {},
+            onMoveToUnassigned: () {},
+            onDelete: () {},
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pump();
 
-    expect(find.text('削除処理を確認しています。'), findsOneWidget);
-    expect(
-      tester.widget<FilledButton>(find.widgetWithText(FilledButton, '写真を追加')).onPressed,
-      isNull,
-    );
-    expect(find.byTooltip('旅行Aの管理メニュー'), findsOneWidget);
-  });
+      expect(find.text('削除処理を確認しています。'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, '写真を追加'))
+            .onPressed,
+        isNull,
+      );
+      expect(find.byTooltip('旅行Aの管理メニュー'), findsOneWidget);
+    },
+  );
 }
