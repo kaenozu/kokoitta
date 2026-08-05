@@ -536,11 +536,8 @@ void main() {
     expect(coordinator.isBusy, isTrue);
     await tester.pump(const Duration(milliseconds: 100));
 
-    final addPhotoButton = find.ancestor(
-      of: find.byTooltip('写真を追加').first,
-      matching: find.byType(IconButton),
-    );
-    expect(tester.widget<IconButton>(addPhotoButton).onPressed, isNull);
+    final addPhotoButton = find.widgetWithText(FilledButton, '写真を追加');
+    expect(tester.widget<FilledButton>(addPhotoButton).onPressed, isNull);
 
     final hokkaidoTapTarget = find.descendant(
       of: find.byKey(const ValueKey<String>('prefecture-map-01')),
@@ -552,12 +549,9 @@ void main() {
     await mutation;
     await tester.pump();
 
-    final reenabledAddPhotoButton = find.ancestor(
-      of: find.byTooltip('写真を追加').first,
-      matching: find.byType(IconButton),
-    );
+    final reenabledAddPhotoButton = find.widgetWithText(FilledButton, '写真を追加');
     expect(
-      tester.widget<IconButton>(reenabledAddPhotoButton).onPressed,
+      tester.widget<FilledButton>(reenabledAddPhotoButton).onPressed,
       isNotNull,
     );
     expect(tester.widget<InkWell>(hokkaidoTapTarget).onTap, isNotNull);

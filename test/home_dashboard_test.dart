@@ -83,6 +83,7 @@ void main() {
         theme: ThemeData(useMaterial3: true),
         home: Builder(
           builder: (context) => ColoredBox(
+            key: const ValueKey<String>('semantic-color-fallback'),
             color: context.kokoittaColors.successContainer,
             child: const SizedBox.expand(),
           ),
@@ -90,7 +91,10 @@ void main() {
       ),
     );
 
-    expect(find.byType(ColoredBox), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('semantic-color-fallback')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -238,18 +242,9 @@ void main() {
     );
     await tester.pump();
 
-    expect(
-      find.bySemanticsLabel('訪問済み1、計画中1、未訪問45、合計47都道府県'),
-      findsWidgets,
-    );
-    expect(
-      find.bySemanticsLabel('北海道、訪問済み。タップすると通過に変更'),
-      findsOneWidget,
-    );
-    expect(
-      find.bySemanticsLabel('埼玉県、通過。タップすると未訪問に変更'),
-      findsOneWidget,
-    );
+    expect(find.bySemanticsLabel('訪問済み1、計画中1、未訪問45、合計47都道府県'), findsWidgets);
+    expect(find.bySemanticsLabel('北海道、訪問済み。タップすると通過に変更'), findsOneWidget);
+    expect(find.bySemanticsLabel('埼玉県、通過。タップすると未訪問に変更'), findsOneWidget);
     semantics.dispose();
   });
 }
