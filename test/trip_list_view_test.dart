@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/app_theme.dart';
 import 'package:kokoitta_app/photo.dart';
-import 'package:kokoitta_app/trip_list_view.dart';
 
 void main() {
   test('captured date and location summaries use available metadata only', () {
