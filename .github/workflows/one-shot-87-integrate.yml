@@ -1,11 +1,9 @@
 name: One-shot integrate trip detail redesign
 
 on:
-  pull_request:
+  push:
     branches:
-      - agent/86-trip-list-redesign
-    paths:
-      - '.github/workflows/one-shot-87-integrate.yml'
+      - agent/87-trip-photo-viewer-redesign
 
 permissions:
   contents: write
@@ -33,6 +31,8 @@ jobs:
           text = main.read_text(encoding='utf-8')
           marker = "import 'trip_store.dart';\n"
           if "import 'trip_detail_view.dart';" not in text:
+              if marker not in text:
+                  raise SystemExit('trip_store import marker not found')
               text = text.replace(marker, marker + "import 'trip_detail_view.dart';\n", 1)
           main.write_text(text, encoding='utf-8')
 
