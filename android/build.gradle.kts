@@ -37,3 +37,28 @@ tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
 
+// Pinned bundletool is used only by release artifact verification.
+val releaseBundletool by configurations.creating
+
+dependencies {
+    add(releaseBundletool.name, "com.android.tools.build:bundletool:1.18.3")
+}
+
+tasks.register<JavaExec>("dumpReleaseBundleManifestAttribute") {
+    group = "verification"
+    description = "Print one Android App Bundle manifest attribute using bundletool."
+    classpath = releaseBundletool
+    mainClass.set("com.android.tools.build.bundletool.BundleToolMain")
+    doFirst {
+        val bundleFile = providers.gradleProperty("bundleFile").orNull
+            ?: throw GradleException("-PbundleFile is required")
+        val manifestXpath = providers.gradleProperty("manifestXpath").orNull
+            ?: throw GradleException("-PmanifestXpath is required")
+        args(
+            "dump",
+            "manifest",
+            "--bundle=$bundleFile",
+            "--xpath=$manifestXpath",
+        )
+    }
+}
