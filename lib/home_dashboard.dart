@@ -19,8 +19,7 @@ class HomePrefectureSummary {
   final int planned;
   final int unvisited;
 
-  String get semanticLabel =>
-      '訪問済み$visited、計画中$planned、未訪問$unvisited、合計47都道府県';
+  String get semanticLabel => '訪問済み$visited、計画中$planned、未訪問$unvisited、合計47都道府県';
 }
 
 @immutable
@@ -54,11 +53,9 @@ class HomeDashboardOperation {
 
 @immutable
 class HomeDashboardQuota {
-  const HomeDashboardQuota({
-    required this.count,
-    required this.limit,
-  }) : assert(count >= 0),
-       assert(limit > 0);
+  const HomeDashboardQuota({required this.count, required this.limit})
+    : assert(count >= 0),
+      assert(limit > 0);
 
   final int count;
   final int limit;
@@ -303,8 +300,7 @@ class HomeMapDashboard extends StatelessWidget {
           KokoittaStatePanel(
             tone: KokoittaStateTone.quota,
             title: '写真の保存上限に達しました',
-            message:
-                '${quota.count} / ${quota.limit}枚。旅行一覧で不要な写真を整理できます。',
+            message: '${quota.count} / ${quota.limit}枚。旅行一覧で不要な写真を整理できます。',
             primaryAction: KokoittaActionButton(
               label: '写真を整理',
               icon: Icons.photo_library_outlined,
@@ -372,9 +368,7 @@ class HomeMapDashboard extends StatelessWidget {
                             aspectRatio: KokoittaImageAspect.wide.ratio,
                             child: item.image,
                           ),
-                          metadata: <Widget>[
-                            Text('${item.photoCount}枚の思い出'),
-                          ],
+                          metadata: <Widget>[Text('${item.photoCount}枚の思い出')],
                         ),
                       ),
                     )
@@ -421,9 +415,9 @@ class _SummaryMetric extends StatelessWidget {
             const SizedBox(width: KokoittaSpacing.xxs),
             Text(
               '$label $count',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: foreground,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(color: foreground),
             ),
           ],
         ),

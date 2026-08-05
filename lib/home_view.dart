@@ -150,7 +150,7 @@ extension _HomeView on _HomePageState {
     return HomeMapDashboard(
       prefectureStates: _data.prefectureStates,
       prefectureSummary: _homePrefectureSummary,
-      quota: HomeDashboardQuota(count: _photoCount, limit: PhotoQuotaStatus.limit),
+      quota: HomeDashboardQuota(count: _photoCount, limit: _quotaStatus.limit),
       photoCount: _photoCount,
       recentTrips: _homeRecentTrips,
       operation: _homeOperation,
