@@ -20,19 +20,16 @@ class KokoittaActionButton extends StatelessWidget {
   final KokoittaActionEmphasis emphasis;
 
   Widget _content() {
-    final children = <Widget>[
-      if (icon != null)
-        ExcludeSemantics(
-          child: Icon(icon, size: KokoittaSize.icon),
-        ),
-      Text(label, textAlign: TextAlign.center),
-    ];
     return Wrap(
       alignment: WrapAlignment.center,
       crossAxisAlignment: WrapCrossAlignment.center,
       spacing: KokoittaSpacing.xs,
       runSpacing: KokoittaSpacing.xxs,
-      children: children,
+      children: <Widget>[
+        if (icon != null)
+          ExcludeSemantics(child: Icon(icon, size: KokoittaSize.icon)),
+        Text(label, textAlign: TextAlign.center),
+      ],
     );
   }
 
@@ -73,66 +70,59 @@ class KokoittaSectionHeader extends StatelessWidget {
   final Widget? trailing;
 
   Widget _copy(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(title, style: Theme.of(context).textTheme.headlineSmall),
-        if (supportingText != null) ...[
-          const SizedBox(height: KokoittaSpacing.xs),
-          Text(
-            supportingText!,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+    return Semantics(
+      header: true,
+      container: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(title, style: Theme.of(context).textTheme.headlineSmall),
+          if (supportingText != null) ...<Widget>[
+            const SizedBox(height: KokoittaSpacing.xs),
+            Text(
+              supportingText!,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
-          ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      header: true,
-      container: true,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.3;
-          final stack = largeText || constraints.maxWidth < 520;
-          if (trailing == null) return _copy(context);
-          if (stack) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _copy(context),
-                const SizedBox(height: KokoittaSpacing.sm),
-                Align(alignment: Alignment.centerLeft, child: trailing),
-              ],
-            );
-          }
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: _copy(context)),
-              const SizedBox(width: KokoittaSpacing.md),
-              trailing!,
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.3;
+        final stack = largeText || constraints.maxWidth < 520;
+        if (trailing == null) return _copy(context);
+        if (stack) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              _copy(context),
+              const SizedBox(height: KokoittaSpacing.sm),
+              Align(alignment: Alignment.centerLeft, child: trailing),
             ],
           );
-        },
-      ),
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(child: _copy(context)),
+            const SizedBox(width: KokoittaSpacing.md),
+            trailing!,
+          ],
+        );
+      },
     );
   }
 }
 
-enum KokoittaStateTone {
-  neutral,
-  progress,
-  success,
-  warning,
-  error,
-  quota,
-}
+enum KokoittaStateTone { neutral, progress, success, warning, error, quota }
 
 class KokoittaStatePanel extends StatelessWidget {
   const KokoittaStatePanel({
@@ -203,6 +193,7 @@ class KokoittaStatePanel extends StatelessWidget {
     final actions = <Widget>[?primaryAction, ?secondaryAction];
     return Semantics(
       container: true,
+      explicitChildNodes: true,
       liveRegion: liveRegion,
       child: DecoratedBox(
         decoration: BoxDecoration(
@@ -216,10 +207,10 @@ class KokoittaStatePanel extends StatelessWidget {
           padding: const EdgeInsets.all(KokoittaSpacing.md),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+            children: <Widget>[
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+                children: <Widget>[
                   IconTheme(
                     data: IconThemeData(
                       color: appearance.foreground,
@@ -233,14 +224,14 @@ class KokoittaStatePanel extends StatelessWidget {
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                      children: <Widget>[
                         Text(
                           title,
                           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                             color: appearance.foreground,
                           ),
                         ),
-                        if (message != null) ...[
+                        if (message != null) ...<Widget>[
                           const SizedBox(height: KokoittaSpacing.xs),
                           Text(
                             message!,
@@ -253,7 +244,7 @@ class KokoittaStatePanel extends StatelessWidget {
                   ),
                 ],
               ),
-              if (busy || progress != null) ...[
+              if (busy || progress != null) ...<Widget>[
                 const SizedBox(height: KokoittaSpacing.md),
                 LinearProgressIndicator(
                   value: progress,
@@ -263,7 +254,7 @@ class KokoittaStatePanel extends StatelessWidget {
                       : '${(progress! * 100).round()}%',
                 ),
               ],
-              if (actions.isNotEmpty) ...[
+              if (actions.isNotEmpty) ...<Widget>[
                 const SizedBox(height: KokoittaSpacing.md),
                 Wrap(
                   spacing: KokoittaSpacing.sm,
@@ -330,7 +321,7 @@ class KokoittaPhotoPlaceholder extends StatelessWidget {
               child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  children: [
+                  children: <Widget>[
                     if (state == KokoittaPhotoPlaceholderState.loading)
                       const SizedBox.square(
                         dimension: KokoittaSize.iconLarge,
@@ -389,57 +380,62 @@ class KokoittaTripSummaryCard extends StatelessWidget {
     );
     return Semantics(
       container: true,
+      explicitChildNodes: true,
       button: onTap != null,
       enabled: onTap != null,
       label: semanticLabel,
-      child: ExcludeSemantics(
-        child: Card(
-          shape: cardShape,
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: onTap,
-            customBorder: cardShape,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                image ??
+      onTap: onTap,
+      child: Card(
+        shape: cardShape,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          excludeFromSemantics: true,
+          customBorder: cardShape,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              ExcludeSemantics(
+                child: image ??
                     const KokoittaPhotoPlaceholder(
                       state: KokoittaPhotoPlaceholderState.empty,
                       aspect: KokoittaImageAspect.wide,
                     ),
-                Padding(
-                  padding: const EdgeInsets.all(KokoittaSpacing.md),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
+              ),
+              Padding(
+                padding: const EdgeInsets.all(KokoittaSpacing.md),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Expanded(
+                          child: ExcludeSemantics(
                             child: Text(
                               title,
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
                           ),
-                          if (overflow != null) ...[
-                            const SizedBox(width: KokoittaSpacing.xs),
-                            overflow!,
-                          ],
+                        ),
+                        if (overflow != null) ...<Widget>[
+                          const SizedBox(width: KokoittaSpacing.xs),
+                          overflow!,
                         ],
-                      ),
-                      if (badge != null) ...[
-                        const SizedBox(height: KokoittaSpacing.xs),
-                        badge!,
                       ],
-                      for (final item in metadata) ...[
-                        const SizedBox(height: KokoittaSpacing.xs),
-                        item,
-                      ],
+                    ),
+                    if (badge != null) ...<Widget>[
+                      const SizedBox(height: KokoittaSpacing.xs),
+                      ExcludeSemantics(child: badge!),
                     ],
-                  ),
+                    for (final item in metadata) ...<Widget>[
+                      const SizedBox(height: KokoittaSpacing.xs),
+                      ExcludeSemantics(child: item),
+                    ],
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -447,6 +443,7 @@ class KokoittaTripSummaryCard extends StatelessWidget {
   }
 }
 
+/// An icon-only action that retains the native [IconButton] semantics action.
 class KokoittaSemanticIconButton extends StatelessWidget {
   const KokoittaSemanticIconButton({
     required this.icon,
@@ -461,22 +458,12 @@ class KokoittaSemanticIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      enabled: onPressed != null,
-      label: label,
-      child: Tooltip(
-        message: label,
-        excludeFromSemantics: true,
-        child: SizedBox.square(
-          dimension: KokoittaSize.minimumTapTarget,
-          child: ExcludeSemantics(
-            child: IconButton(
-              onPressed: onPressed,
-              icon: Icon(icon),
-            ),
-          ),
-        ),
+    return SizedBox.square(
+      dimension: KokoittaSize.minimumTapTarget,
+      child: IconButton(
+        tooltip: label,
+        onPressed: onPressed,
+        icon: Icon(icon),
       ),
     );
   }
