@@ -215,9 +215,11 @@ void main() {
       ),
     );
 
+    final header = find.bySemanticsLabel('旅行');
+    expect(header, findsOneWidget);
     expect(
-      tester.getSemantics(find.byType(KokoittaSectionHeader)),
-      matchesSemantics(isHeader: true),
+      tester.getSemantics(header),
+      matchesSemantics(label: '旅行', isHeader: true),
     );
     expect(
       tester.getSemantics(find.byType(KokoittaStatePanel)),
