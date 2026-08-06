@@ -72,12 +72,13 @@ class ImportUiSnapshot {
     isLiveRegion: true,
   );
 
-  static ImportUiSnapshot quotaReached({required int limit}) => ImportUiSnapshot(
-    state: ImportUiState.quotaReached,
-    title: '写真の保存上限に達しています',
-    message: '保存できる写真は$limit枚までです。不要な写真を整理してから再度お試しください。',
-    isLiveRegion: true,
-  );
+  static ImportUiSnapshot quotaReached({required int limit}) =>
+      ImportUiSnapshot(
+        state: ImportUiState.quotaReached,
+        title: '写真の保存上限に達しています',
+        message: '保存できる写真は$limit枚までです。不要な写真を整理してから再度お試しください。',
+        isLiveRegion: true,
+      );
 
   factory ImportUiSnapshot.fromEvent(ImportEvent event) {
     final state = switch (event.phase) {
@@ -87,16 +88,19 @@ class ImportUiSnapshot {
       ImportPhase.saving => ImportUiState.saving,
       ImportPhase.completed => ImportUiState.completed,
       ImportPhase.partialFailure => ImportUiState.partialFailure,
-      ImportPhase.failed => _containsQuotaFailure(event)
-          ? ImportUiState.quotaReached
-          : ImportUiState.failed,
+      ImportPhase.failed =>
+        _containsQuotaFailure(event)
+            ? ImportUiState.quotaReached
+            : ImportUiState.failed,
       ImportPhase.cancelled => ImportUiState.cancelled,
     };
 
     final copy = switch (state) {
       ImportUiState.idle => ('写真を追加できます', '端末から写真を選べます。'),
       ImportUiState.validating => (
-        event.total > 0 ? '取り込み ${event.processed} / ${event.total}' : '写真を確認しています',
+        event.total > 0
+            ? '取り込み ${event.processed} / ${event.total}'
+            : '写真を確認しています',
         '追加できる形式か安全に確認しています。',
       ),
       ImportUiState.copying => (
@@ -104,7 +108,9 @@ class ImportUiSnapshot {
         '${event.processed} / ${event.total}件を処理しました。',
       ),
       ImportUiState.saving => (
-        event.total > 0 ? '取り込み ${event.processed} / ${event.total}' : '写真を保存しています',
+        event.total > 0
+            ? '取り込み ${event.processed} / ${event.total}'
+            : '写真を保存しています',
         '端末内へ安全に保存しています。',
       ),
       ImportUiState.completed => ('写真を保存しました', '${event.succeeded}件を追加しました。'),
@@ -112,10 +118,18 @@ class ImportUiSnapshot {
         '一部の写真を保存できませんでした',
         '${event.succeeded}件を保存し、${event.failed}件を保存できませんでした。成功した写真はそのまま利用できます。',
       ),
-      ImportUiState.failed => ('写真を保存できませんでした', '写真は追加されていません。内容を確認して再度お試しください。'),
+      ImportUiState.failed => (
+        '写真を保存できませんでした',
+        '写真は追加されていません。内容を確認して再度お試しください。',
+      ),
       ImportUiState.cancelled => ('写真の追加を取り消しました', '新しい写真は保存されていません。'),
-      ImportUiState.quotaReached => ('写真の保存上限に達しています', '不要な写真を整理してから再度お試しください。'),
-      ImportUiState.selecting || ImportUiState.blocked => throw StateError('event does not map to this state'),
+      ImportUiState.quotaReached => (
+        '写真の保存上限に達しています',
+        '不要な写真を整理してから再度お試しください。',
+      ),
+      ImportUiState.selecting || ImportUiState.blocked => throw StateError(
+        'event does not map to this state',
+      ),
     };
 
     return ImportUiSnapshot(
@@ -126,7 +140,8 @@ class ImportUiSnapshot {
       total: event.total,
       succeeded: event.succeeded,
       failed: event.failed,
-      canCancel: !event.isTerminal &&
+      canCancel:
+          !event.isTerminal &&
           (event.phase == ImportPhase.preparing ||
               event.phase == ImportPhase.copying ||
               event.phase == ImportPhase.saving),

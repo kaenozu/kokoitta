@@ -75,9 +75,7 @@ bool isValidPrefecture(String name) {
   return validPrefectures.contains(name);
 }
 
-Map<String, String> normalizePrefectureStates(
-  Map<String, String> states,
-) {
+Map<String, String> normalizePrefectureStates(Map<String, String> states) {
   final result = <String, String>{};
   for (final entry in states.entries) {
     if (!validPrefectures.contains(entry.key)) continue;

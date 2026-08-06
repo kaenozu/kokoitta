@@ -142,21 +142,24 @@ void main() {
       expect(coordinator.status, OperationStatus.idle);
     });
 
-    test('all queued mutations block restore until the last completes', () async {
-      final firstHold = Completer<void>();
-      final secondHold = Completer<void>();
-      final first = coordinator.runMutation(() => firstHold.future);
-      final second = coordinator.runMutation(() => secondHold.future);
+    test(
+      'all queued mutations block restore until the last completes',
+      () async {
+        final firstHold = Completer<void>();
+        final secondHold = Completer<void>();
+        final first = coordinator.runMutation(() => firstHold.future);
+        final second = coordinator.runMutation(() => secondHold.future);
 
-      firstHold.complete();
-      await first;
-      expect(() => coordinator.beginRestorePrepare(), throwsStateError);
+        firstHold.complete();
+        await first;
+        expect(() => coordinator.beginRestorePrepare(), throwsStateError);
 
-      secondHold.complete();
-      await second;
-      coordinator.beginRestorePrepare();
-      coordinator.endRestore();
-    });
+        secondHold.complete();
+        await second;
+        coordinator.beginRestorePrepare();
+        coordinator.endRestore();
+      },
+    );
 
     test('restore lifecycle: prepare to confirm to commit to end', () async {
       coordinator.beginRestorePrepare();

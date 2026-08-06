@@ -86,9 +86,7 @@ class SettingsBackupView extends StatelessWidget {
                 minTileHeight: 56,
                 leading: const Icon(Icons.backup_outlined),
                 title: const Text('完全バックアップを作成'),
-                subtitle: Text(
-                  isBusy ? '処理中のため利用できません' : '旅行・地図状態・写真をZIPに保存',
-                ),
+                subtitle: Text(isBusy ? '処理中のため利用できません' : '旅行・地図状態・写真をZIPに保存'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: canCreateBackup && !isBusy ? onCreateBackup : null,
               ),

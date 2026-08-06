@@ -19,8 +19,7 @@ class PrefectureStateListTile extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
 
-  String get semanticLabel =>
-      '$name、$currentLabel。タップすると$nextLabelに変更';
+  String get semanticLabel => '$name、$currentLabel。タップすると$nextLabelに変更';
 
   @override
   Widget build(BuildContext context) {

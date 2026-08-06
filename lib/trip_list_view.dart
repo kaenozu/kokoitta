@@ -62,8 +62,7 @@ class KokoittaTripListView extends StatelessWidget {
             child: KokoittaStatePanel(
               tone: KokoittaStateTone.neutral,
               title: '最初の旅の思い出をつくりましょう',
-              message: disabledReason ??
-                  '写真を追加すると、撮影日や場所を手がかりに旅行としてまとめられます。',
+              message: disabledReason ?? '写真を追加すると、撮影日や場所を手がかりに旅行としてまとめられます。',
               primaryAction: KokoittaActionButton(
                 label: '写真を追加',
                 icon: Icons.add_a_photo_outlined,
@@ -152,10 +151,7 @@ class _TripListCard extends StatelessWidget {
           label: item.capturedAtLabel!,
         ),
       if (item.locationLabel != null)
-        _MetadataLine(
-          icon: Icons.place_outlined,
-          label: item.locationLabel!,
-        ),
+        _MetadataLine(icon: Icons.place_outlined, label: item.locationLabel!),
     ];
 
     return KokoittaTripSummaryCard(
@@ -193,8 +189,8 @@ class _MetadataLine extends StatelessWidget {
           child: Text(
             label,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       ],
@@ -203,11 +199,12 @@ class _MetadataLine extends StatelessWidget {
 }
 
 String? formatTripCapturedAt(List<Photo> photos) {
-  final values = photos
-      .map((photo) => photo.capturedAt)
-      .whereType<DateTime>()
-      .toList(growable: false)
-    ..sort();
+  final values =
+      photos
+          .map((photo) => photo.capturedAt)
+          .whereType<DateTime>()
+          .toList(growable: false)
+        ..sort();
   if (values.isEmpty) return null;
   final first = values.first.toLocal();
   final last = values.last.toLocal();

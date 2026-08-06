@@ -166,9 +166,7 @@ void main() {
         .setMockMethodCallHandler(channel, null);
   });
 
-  testWidgets('commit後キャンセルの保存復元失敗をterminal failureとして通知する', (
-    tester,
-  ) async {
+  testWidgets('commit後キャンセルの保存復元失敗をterminal failureとして通知する', (tester) async {
     final sourceDir = (await tester.runAsync(
       () => Directory.systemTemp.createTemp('kokoitta-cancel-source'),
     ))!;
@@ -195,10 +193,7 @@ void main() {
 
     await tester.runAsync(() async {
       await tester.pumpWidget(
-        KokoittaApp(
-          cleanupRunner: _noopCleanup,
-          onImportEvent: events.add,
-        ),
+        KokoittaApp(cleanupRunner: _noopCleanup, onImportEvent: events.add),
       );
       await _waitUntilLoaded(tester);
       store.release = Completer<void>();
@@ -246,9 +241,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('commit後キャンセルの写真削除失敗をterminal failureとして通知する', (
-    tester,
-  ) async {
+  testWidgets('commit後キャンセルの写真削除失敗をterminal failureとして通知する', (tester) async {
     final sourceDir = (await tester.runAsync(
       () => Directory.systemTemp.createTemp('kokoitta-cancel-source'),
     ))!;

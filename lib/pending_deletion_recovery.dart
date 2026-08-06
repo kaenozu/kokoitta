@@ -110,9 +110,7 @@ Future<void> _saveOperations(
   await manager.store.save(
     jsonEncode(<String, Object?>{
       'version': 1,
-      'operations': operations
-          .map((operation) => operation.toJson())
-          .toList(),
+      'operations': operations.map((operation) => operation.toJson()).toList(),
     }),
   );
 }
