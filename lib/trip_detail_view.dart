@@ -220,8 +220,10 @@ class _PhotoGridTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
+      enabled: true,
       image: true,
       label: '$tripTitleの写真 ${index + 1} / $total。拡大表示',
+      onTap: onTap,
       child: ExcludeSemantics(
         child: Material(
           clipBehavior: Clip.antiAlias,
