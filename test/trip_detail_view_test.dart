@@ -28,9 +28,10 @@ void main() {
     expect(find.byType(BackButton), findsOneWidget);
   });
 
-  testWidgets('grid tiles expose trip title position and total', (
+  testWidgets('grid tiles expose actionable trip title position and total', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     final photos = List<Photo>.generate(
       4,
       (index) =>
@@ -51,10 +52,25 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.bySemanticsLabel('春の旅行の写真 1 / 4。拡大表示'), findsOneWidget);
-    await tester.tap(find.bySemanticsLabel('春の旅行の写真 2 / 4。拡大表示'));
+    final first = find.bySemanticsLabel('春の旅行の写真 1 / 4。拡大表示');
+    expect(first, findsOneWidget);
+    expect(
+      tester.getSemantics(first),
+      matchesSemantics(
+        label: '春の旅行の写真 1 / 4。拡大表示',
+        isButton: true,
+        isImage: true,
+        hasEnabledState: true,
+        isEnabled: true,
+        hasTapAction: true,
+      ),
+    );
+
+    final second = find.bySemanticsLabel('春の旅行の写真 2 / 4。拡大表示');
+    await tester.tap(second);
     expect(tapped, 1);
     expect(find.textContaining('4枚の写真'), findsOneWidget);
+    semantics.dispose();
   });
 
   testWidgets('200 percent text uses a readable two-column grid', (
