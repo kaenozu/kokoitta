@@ -72,7 +72,7 @@ void main() {
     semantics.dispose();
   });
 
-  testWidgets('200 percent text uses a readable two-column grid', (
+  testWidgets('200 percent text uses a readable two-column lazy grid', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(412, 915);
@@ -98,7 +98,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final grid = tester.widget<SliverGrid>(find.byType(SliverGrid));
+    final grid = tester.widget<GridView>(find.byType(GridView));
     final delegate =
         grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
     expect(delegate.crossAxisCount, 2);
