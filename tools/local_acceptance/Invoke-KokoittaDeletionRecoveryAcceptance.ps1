@@ -67,8 +67,26 @@ try {
     $deadline = (Get-Date).AddSeconds($ManifestWaitSeconds)
     $manifestXml = $null
     do {
-        $manifestXml = Get-PendingDeletionManifestXml -Serial $Serial -PackageName $PackageName
-        if ($manifestXml) { break }
+        $candidateXml = Get-PendingDeletionManifestXml -Serial $Serial -PackageName $PackageName
+        if ($candidateXml) {
+            try {
+                $candidateManifest = ConvertFrom-PendingDeletionManifestXml -XmlText $candidateXml
+                $candidateOperations = if ($candidateManifest -and $candidateManifest.operations) {
+                    @($candidateManifest.operations)
+                } else {
+                    @()
+                }
+                $stagedOperations = @($candidateOperations | Where-Object {
+                    [string]$_.state -eq 'staged'
+                })
+                if ($candidateOperations.Count -gt 0 -and $stagedOperations.Count -eq 0) {
+                    $manifestXml = $candidateXml
+                    break
+                }
+            } catch {
+                # Keep waiting while the app is still writing the manifest.
+            }
+        }
         Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
     if (-not $manifestXml) { throw "pendingDeletionManifestV1 was not detected within $ManifestWaitSeconds seconds." }
@@ -127,7 +145,7 @@ try {
         Add-Check 'Manifest/original/trash consistency' 'FAIL' ($contradictions -join ' ')
     }
 
-    $crashes = Get-AppCrashSummary -Serial $Serial -PackageName $PackageName -LogPath (Join-Path $runDirectory 'logs/logcat.txt')
+    $crashes = @(Get-AppCrashSummary -Serial $Serial -PackageName $PackageName -LogPath (Join-Path $runDirectory 'logs/logcat.txt'))
     if ($crashes.Count -eq 0) { Add-Check 'Crash/ANR/OOM logcat' 'PASS' 'No matching fatal event was found.' }
     else { Add-Check 'Crash/ANR/OOM logcat' 'FAIL' ($crashes -join ' | ') }
 
