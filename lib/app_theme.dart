@@ -6,6 +6,7 @@ export 'design/kokoitta_components.dart';
 export 'design/kokoitta_design_system.dart';
 export 'home_dashboard.dart';
 export 'prefecture_state_list_tile.dart';
+export 'trip_detail_view.dart';
 export 'trip_list_view.dart';
 
 /// Backward-compatible entry point used by the application shell and tests.
