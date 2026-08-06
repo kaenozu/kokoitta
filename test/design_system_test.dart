@@ -262,8 +262,16 @@ void main() {
     );
 
     await tester.tap(trip);
-    await tester.tap(menu);
-    await tester.tap(settings);
+    tester
+        .widget<IconButton>(
+          find.ancestor(of: menu, matching: find.byType(IconButton)).first,
+        )
+        .onPressed!();
+    tester
+        .widget<IconButton>(
+          find.ancestor(of: settings, matching: find.byType(IconButton)).first,
+        )
+        .onPressed!();
     await tester.pump();
     expect(tripTapCount, 1);
     expect(menuTapCount, 1);
