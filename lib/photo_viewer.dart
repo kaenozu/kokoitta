@@ -169,28 +169,32 @@ class _PhotoViewerState extends State<PhotoViewer> {
                   devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
                 );
                 final transformation = _transformationFor(index);
+                final semanticLabel =
+                    '写真 ${index + 1} / ${widget.photos.length}。ダブルタップで拡大または元に戻す';
                 return Semantics(
                   container: true,
                   image: true,
-                  label:
-                      '写真 ${index + 1} / ${widget.photos.length}。ダブルタップで拡大または元に戻す',
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onDoubleTap: () => _toggleZoom(index),
-                    child: InteractiveViewer(
-                      key: ValueKey<String>('photo-viewer-$index'),
-                      transformationController: transformation,
-                      minScale: 1,
-                      maxScale: 4,
-                      child: Center(
-                        child:
-                            (widget.imageBuilder ??
-                            _defaultPhotoViewerImageBuilder)(
-                              context,
-                              File(widget.photos[index].file.path),
-                              dimension,
-                              '写真 ${index + 1}',
-                            ),
+                  label: semanticLabel,
+                  onTap: () => _toggleZoom(index),
+                  child: ExcludeSemantics(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onDoubleTap: () => _toggleZoom(index),
+                      child: InteractiveViewer(
+                        key: ValueKey<String>('photo-viewer-$index'),
+                        transformationController: transformation,
+                        minScale: 1,
+                        maxScale: 4,
+                        child: Center(
+                          child:
+                              (widget.imageBuilder ??
+                              _defaultPhotoViewerImageBuilder)(
+                                context,
+                                File(widget.photos[index].file.path),
+                                dimension,
+                                '写真 ${index + 1}',
+                              ),
+                        ),
                       ),
                     ),
                   ),
