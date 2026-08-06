@@ -108,7 +108,10 @@ void main() {
     expect(find.bySemanticsLabel('写真 2 / 2'), findsOneWidget);
   });
 
-  testWidgets('double-tap callback toggles zoom and reset', (tester) async {
+  testWidgets('zoom is available to pointer and accessibility users', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
     final photo = Photo.fromFile(File('/virtual/photo.jpg'), id: 'photo');
     await tester.pumpWidget(
       MaterialApp(
@@ -120,6 +123,19 @@ void main() {
       ),
     );
     await tester.pump();
+
+    final semanticImage = find.bySemanticsLabel(
+      '写真 1 / 1。ダブルタップで拡大または元に戻す',
+    );
+    expect(semanticImage, findsOneWidget);
+    expect(
+      tester.getSemantics(semanticImage),
+      matchesSemantics(
+        label: '写真 1 / 1。ダブルタップで拡大または元に戻す',
+        isImage: true,
+        hasTapAction: true,
+      ),
+    );
 
     final target = find.byKey(const ValueKey<String>('photo-viewer-0'));
     InteractiveViewer current() => tester.widget<InteractiveViewer>(target);
@@ -137,6 +153,7 @@ void main() {
     gesture().onDoubleTap!();
     await tester.pump();
     expect(current().transformationController!.value.getMaxScaleOnAxis(), 1);
+    semantics.dispose();
   });
 
   testWidgets('missing file shows a recoverable fallback', (tester) async {
@@ -156,6 +173,9 @@ void main() {
     await tester.pump();
     expect(find.text('写真を表示できません'), findsOneWidget);
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
-    expect(find.bySemanticsLabel('写真を表示できません。戻る操作は利用できます'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('写真を表示できません。戻る操作は利用できます'),
+      findsOneWidget,
+    );
   });
 }
