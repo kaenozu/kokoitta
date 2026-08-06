@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:kokoitta/import_progress.dart';
-import 'package:kokoitta/import_state_contract.dart';
+import 'package:kokoitta_app/import_progress.dart';
+import 'package:kokoitta_app/import_state_contract.dart';
 
 void main() {
   group('ImportUiSnapshot', () {
