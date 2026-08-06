@@ -57,8 +57,7 @@ enum KokoittaImageAspect {
 /// disabled control styling continue to come from [ColorScheme] and component
 /// themes. These values cover product-specific status and map meanings only.
 @immutable
-class KokoittaSemanticColors
-    extends ThemeExtension<KokoittaSemanticColors> {
+class KokoittaSemanticColors extends ThemeExtension<KokoittaSemanticColors> {
   const KokoittaSemanticColors({
     required this.elevatedSurface,
     required this.success,
@@ -223,27 +222,26 @@ class KokoittaSemanticColors
 
 extension KokoittaThemeContext on BuildContext {
   KokoittaSemanticColors get kokoittaColors {
-    final colors = Theme.of(this).extension<KokoittaSemanticColors>();
-    assert(colors != null, 'KokoittaSemanticColors is missing from ThemeData.');
-    return colors!;
+    final theme = Theme.of(this);
+    return theme.extension<KokoittaSemanticColors>() ??
+        KokoittaSemanticColors.fromScheme(theme.colorScheme);
   }
 }
 
 ThemeData buildKokoittaDesignTheme(Brightness brightness) {
   final isDark = brightness == Brightness.dark;
-  final scheme = ColorScheme.fromSeed(
-    seedColor: isDark ? const Color(0xff8fd3aa) : const Color(0xff1b4332),
-    brightness: brightness,
-  ).copyWith(
-    primary: isDark ? const Color(0xffb5e8c8) : const Color(0xff1b4332),
-    secondary: isDark ? const Color(0xffffa58f) : const Color(0xffff7051),
-    surface: isDark ? const Color(0xff121714) : const Color(0xfffcf9f8),
-  );
+  final scheme =
+      ColorScheme.fromSeed(
+        seedColor: isDark ? const Color(0xff8fd3aa) : const Color(0xff1b4332),
+        brightness: brightness,
+      ).copyWith(
+        primary: isDark ? const Color(0xffb5e8c8) : const Color(0xff1b4332),
+        secondary: isDark ? const Color(0xffffa58f) : const Color(0xffff7051),
+        surface: isDark ? const Color(0xff121714) : const Color(0xfffcf9f8),
+      );
   final semantic = KokoittaSemanticColors.fromScheme(scheme);
   final scaffold = scheme.surface;
-  final navigation = isDark
-      ? const Color(0xff18201c)
-      : const Color(0xfff0eded);
+  final navigation = isDark ? const Color(0xff18201c) : const Color(0xfff0eded);
   final baseTextTheme = ThemeData(
     brightness: brightness,
     useMaterial3: true,
@@ -268,9 +266,7 @@ ThemeData buildKokoittaDesignTheme(Brightness brightness) {
     bodyLarge: baseTextTheme.bodyLarge?.copyWith(height: 1.5),
     bodyMedium: baseTextTheme.bodyMedium?.copyWith(height: 1.5),
     bodySmall: baseTextTheme.bodySmall?.copyWith(height: 1.45),
-    labelLarge: baseTextTheme.labelLarge?.copyWith(
-      fontWeight: FontWeight.w700,
-    ),
+    labelLarge: baseTextTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
     labelMedium: baseTextTheme.labelMedium?.copyWith(
       fontWeight: FontWeight.w600,
     ),
@@ -308,9 +304,7 @@ ThemeData buildKokoittaDesignTheme(Brightness brightness) {
       labelTextStyle: WidgetStateProperty.resolveWith((states) {
         final selected = states.contains(WidgetState.selected);
         return textTheme.labelMedium?.copyWith(
-          color: selected
-              ? scheme.onPrimaryContainer
-              : scheme.onSurfaceVariant,
+          color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
           fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
         );
       }),

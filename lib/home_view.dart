@@ -14,42 +14,79 @@ extension _HomeView on _HomePageState {
   bool get _cannotAddPhotos =>
       _isDisabled || _loadError != null || _photoQuotaReached;
 
+  HomePrefectureSummary get _homePrefectureSummary {
+    final visited = _prefectures
+        .where((name) => _data.prefectureStates[name] == 'visited')
+        .length;
+    final planned = _prefectures
+        .where((name) => _data.prefectureStates[name] == 'transit')
+        .length;
+    return HomePrefectureSummary(
+      visited: visited,
+      planned: planned,
+      unvisited: OfflineJapanMap.prefectureCount - visited - planned,
+    );
+  }
+
+  HomeDashboardOperation? get _homeOperation {
+    final event = _importEvent;
+    if (event != null && !event.isTerminal) {
+      final cancelling = event.phase == ImportPhase.cancelled;
+      return HomeDashboardOperation(
+        title: cancelling
+            ? '写真の追加をキャンセルしています'
+            : '取り込み ${event.processed} / ${event.total}',
+        message: cancelling
+            ? '保存前の処理を安全に取り消しています。完了するまでお待ちください。'
+            : '写真を安全に処理しています。',
+        processed: event.processed,
+        total: event.total,
+        onCancel: cancelling ? null : _cancelImport,
+      );
+    }
+    if (_coordinator.isBusy || _isCleanupRunning) {
+      return const HomeDashboardOperation(
+        title: 'データを安全に処理しています',
+        message: '処理が完了すると写真を追加できます。',
+      );
+    }
+    return null;
+  }
+
+  String? get _addDisabledReason {
+    if (_photoQuotaReached) {
+      return '保存上限に達しています。旅行一覧で不要な写真を整理してください。';
+    }
+    if (_homeOperation != null) {
+      return '処理が完了すると写真を追加できます。';
+    }
+    if (!_pendingDeletionAvailable && _pendingDeletion != null) {
+      return '削除処理の回復を確認しているため、写真を追加できません。';
+    }
+    return null;
+  }
+
+  List<HomeRecentTripItem> get _homeRecentTrips => _data.trips
+      .take(3)
+      .map(
+        (trip) => HomeRecentTripItem(
+          title: trip.title,
+          photoCount: trip.photos.length,
+          image: _photoPreview(trip.photos),
+          onTap: () => _showTrip(trip),
+        ),
+      )
+      .toList(growable: false);
+
   Widget _buildPage(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('ここいった'),
         actions: <Widget>[
-          if (_coordinator.isBusy)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8),
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          if (_importEvent != null && !_importEvent!.isTerminal)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(
-                  '取り込み ${_importEvent!.processed} / ${_importEvent!.total}',
-                ),
-                TextButton(
-                  onPressed: _cancelImport,
-                  child: const Text('キャンセル'),
-                ),
-              ],
-            ),
-          IconButton(
-            onPressed: _cannotAddPhotos ? null : _addPhotos,
-            icon: const Icon(Icons.add_photo_alternate_outlined),
-            tooltip: '写真を追加',
-          ),
-          IconButton(
+          KokoittaSemanticIconButton(
             onPressed: _isDisabled ? null : _showBackupMenu,
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: '設定',
+            icon: Icons.settings_outlined,
+            label: '設定を開く',
           ),
         ],
       ),
@@ -70,40 +107,40 @@ extension _HomeView on _HomePageState {
           ),
         ],
       ),
-      floatingActionButton: _isLoading || _loadError != null
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: _cannotAddPhotos ? null : _addPhotos,
-              icon: const Icon(Icons.add_a_photo),
-              label: const Text('写真を追加'),
-            ),
     );
   }
 
   Widget _buildBody() {
-    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    if (_isLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(KokoittaSpacing.lg),
+          child: KokoittaStatePanel(
+            tone: KokoittaStateTone.progress,
+            title: '旅の記録を読み込んでいます',
+            message: '端末内の写真と地図の状態を確認しています。',
+            busy: true,
+            liveRegion: true,
+          ),
+        ),
+      );
+    }
     if (_loadError != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const Icon(Icons.error_outline, size: 64),
-              const SizedBox(height: 16),
-              const Text(
-                '保存データを読み込めませんでした',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(_loadError!, textAlign: TextAlign.center),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
+          padding: const EdgeInsets.all(KokoittaSpacing.lg),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: KokoittaStatePanel(
+              tone: KokoittaStateTone.error,
+              title: '保存データを読み込めませんでした',
+              message: 'バックアップがある場合は、安全に内容を確認してから復元できます。',
+              primaryAction: KokoittaActionButton(
+                label: 'バックアップから復元',
+                icon: Icons.restore_outlined,
                 onPressed: _showBackupMenu,
-                icon: const Icon(Icons.restore),
-                label: const Text('バックアップから復元'),
               ),
-            ],
+            ),
           ),
         ),
       );
@@ -112,194 +149,147 @@ extension _HomeView on _HomePageState {
   }
 
   Widget _mapView(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 120),
+    final operation = _homeOperation;
+    return Column(
       children: <Widget>[
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: <Widget>[
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text('こんにちは', style: Theme.of(context).textTheme.bodyMedium),
-                Text(
-                  '旅の記録',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+        if (operation != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              KokoittaSpacing.md,
+              KokoittaSpacing.sm,
+              KokoittaSpacing.md,
+              0,
             ),
-            IconButton(
-              onPressed: _isDisabled ? null : _showBackupMenu,
-              icon: const Icon(Icons.tune),
-              tooltip: '設定',
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Card(
-          color: Theme.of(context).colorScheme.primaryContainer,
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Icon(
-                  Icons.explore_outlined,
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  size: 42,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'まだ知らない場所へ',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '${_data.prefectureStates.values.where((state) => state == 'visited').length} / 47 都道府県を訪問',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.secondary,
-                    foregroundColor: Theme.of(context).colorScheme.onSecondary,
-                  ),
-                  onPressed: _cannotAddPhotos ? null : _addPhotos,
-                  icon: const Icon(Icons.add_a_photo),
-                  label: const Text('写真を読み込む'),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        PhotoQuotaCard(status: _quotaStatus),
-        const SizedBox(height: 28),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: OfflineJapanMap(states: _data.prefectureStates),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          '都道府県マップ',
-          style: Theme.of(
-            context,
-          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: _prefectures.map((name) {
-                final state = _data.prefectureStates[name] ?? 'unvisited';
-                return ActionChip(
-                  label: Text(name),
-                  avatar: Icon(
-                    state == 'visited'
-                        ? Icons.check
-                        : state == 'transit'
-                        ? Icons.directions_car
-                        : Icons.circle_outlined,
-                    size: 16,
-                  ),
-                  onPressed: _isDisabled
-                      ? null
-                      : () => _updatePrefecture(name, state),
-                );
-              }).toList(),
-            ),
-          ),
-        ),
-        const SizedBox(height: 28),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: <Widget>[
-            Text(
-              '最近の旅行',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            TextButton(
-              onPressed: () => _updateState(() => _tab = 1),
-              child: const Text('すべて見る'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        if (_data.trips.isEmpty)
-          const Text('写真を追加すると、ここに旅の思い出が並びます。')
-        else
-          SizedBox(
-            height: 150,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: _data.trips.length > 5 ? 5 : _data.trips.length,
-              separatorBuilder: (context, index) => const SizedBox(width: 12),
-              itemBuilder: (_, index) {
-                final trip = _data.trips[index];
-                return SizedBox(
-                  width: 180,
-                  child: Card(
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () => _showTrip(trip),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Expanded(child: _photoPreview(trip.photos)),
-                          Padding(
-                            padding: const EdgeInsets.all(10),
-                            child: Text(
-                              trip.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+            child: KokoittaStatePanel(
+              tone: KokoittaStateTone.progress,
+              title: operation.title,
+              message: operation.message,
+              progress: operation.progress,
+              busy: true,
+              liveRegion: true,
+              secondaryAction: operation.onCancel == null
+                  ? null
+                  : KokoittaActionButton(
+                      label: 'キャンセル',
+                      emphasis: KokoittaActionEmphasis.secondary,
+                      onPressed: operation.onCancel,
                     ),
-                  ),
-                );
-              },
             ),
           ),
+        Expanded(
+          child: HomeMapDashboard(
+            prefectureStates: _data.prefectureStates,
+            prefectureSummary: _homePrefectureSummary,
+            quota: HomeDashboardQuota(
+              count: _photoCount,
+              limit: _quotaStatus.limit,
+            ),
+            photoCount: _photoCount,
+            recentTrips: _homeRecentTrips,
+            addDisabledReason: _addDisabledReason,
+            onAddPhotos: _cannotAddPhotos ? null : _addPhotos,
+            onShowAllTrips: () => _updateState(() => _tab = 1),
+            onShowPrefectureList: _isDisabled ? null : _showPrefectureList,
+            onRestoreBackup: _isDisabled ? null : _showBackupMenu,
+            onOpenSettings: null,
+          ),
+        ),
       ],
     );
   }
 
+  void _showPrefectureList() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.82,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          builder: (context, scrollController) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  KokoittaSpacing.lg,
+                  KokoittaSpacing.xs,
+                  KokoittaSpacing.lg,
+                  KokoittaSpacing.md,
+                ),
+                child: KokoittaSectionHeader(
+                  title: '都道府県の状態を設定',
+                  supportingText: _homePrefectureSummary.semanticLabel,
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollController,
+                  itemCount: _prefectures.length,
+                  itemBuilder: (context, index) {
+                    final name = _prefectures[index];
+                    final state = _data.prefectureStates[name] ?? 'unvisited';
+                    final currentLabel = _prefectureStateLabel(state);
+                    final nextLabel = _prefectureNextStateLabel(state);
+
+                    void updatePrefecture() {
+                      Navigator.pop(sheetContext);
+                      unawaited(_updatePrefecture(name, state));
+                    }
+
+                    return PrefectureStateListTile(
+                      name: name,
+                      currentLabel: currentLabel,
+                      nextLabel: nextLabel,
+                      icon: _prefectureStateIcon(state),
+                      onTap: updatePrefecture,
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _prefectureStateLabel(String state) => switch (state) {
+    'visited' => '訪問済み',
+    'transit' => '計画中・通過',
+    _ => '未訪問',
+  };
+
+  String _prefectureNextStateLabel(String state) => switch (state) {
+    'visited' => '計画中・通過',
+    'transit' => '未訪問',
+    _ => '訪問済み',
+  };
+
+  IconData _prefectureStateIcon(String state) => switch (state) {
+    'visited' => Icons.check_circle_outline,
+    'transit' => Icons.route_outlined,
+    _ => Icons.circle_outlined,
+  };
+
   Widget _tripView() {
     if (_data.trips.isEmpty && _data.unassignedPhotos.isEmpty) {
       return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const Icon(Icons.photo_album_outlined, size: 64),
-            const SizedBox(height: 12),
-            const Text('旅行がありません'),
-            const SizedBox(height: 16),
-            FilledButton.icon(
+        child: Padding(
+          padding: const EdgeInsets.all(KokoittaSpacing.lg),
+          child: KokoittaStatePanel(
+            tone: KokoittaStateTone.neutral,
+            title: '旅行がありません',
+            message: '写真を追加すると、撮影日をもとに旅行の思い出をまとめられます。',
+            primaryAction: KokoittaActionButton(
+              label: '写真を追加',
+              icon: Icons.add_a_photo_outlined,
               onPressed: _cannotAddPhotos ? null : _addPhotos,
-              icon: const Icon(Icons.add_a_photo),
-              label: const Text('写真を追加'),
             ),
-          ],
+          ),
         ),
       );
     }
@@ -412,7 +402,10 @@ extension _HomeView on _HomePageState {
 
   Widget _photoPreview(List<Photo> photos) {
     if (photos.isEmpty) {
-      return const Center(child: Icon(Icons.landscape, size: 48));
+      return const KokoittaPhotoPlaceholder(
+        state: KokoittaPhotoPlaceholderState.empty,
+        aspect: KokoittaImageAspect.wide,
+      );
     }
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -426,8 +419,10 @@ extension _HomeView on _HomePageState {
           width: double.infinity,
           fit: BoxFit.cover,
           cacheWidth: dimension,
-          errorBuilder: (_, _, _) =>
-              const Center(child: Icon(Icons.broken_image_outlined, size: 48)),
+          errorBuilder: (_, _, _) => const KokoittaPhotoPlaceholder(
+            state: KokoittaPhotoPlaceholderState.missing,
+            aspect: KokoittaImageAspect.wide,
+          ),
         );
       },
     );
