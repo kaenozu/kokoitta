@@ -5,6 +5,7 @@ import 'design/kokoitta_design_system.dart';
 export 'design/kokoitta_components.dart';
 export 'design/kokoitta_design_system.dart';
 export 'home_dashboard.dart';
+export 'import_state_contract.dart';
 export 'prefecture_state_list_tile.dart';
 export 'trip_detail_view.dart';
 export 'trip_list_view.dart';
