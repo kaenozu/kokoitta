@@ -1,0 +1,30 @@
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('trip cards open the full-screen detail and accessible viewer', () {
+    final source = File('lib/home_view.dart').readAsStringSync();
+    final start = source.indexOf('  void _showTrip(Trip trip) {');
+    final end = source.indexOf('  void _showUnassignedPhotos() {');
+
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+
+    final route = source.substring(start, end);
+    expect(route, contains('Navigator.of(context).push('));
+    expect(route, contains('TripDetailView('));
+    expect(route, contains('onPhotoTap:'));
+    expect(route, contains('onShare:'));
+    expect(route, contains('onAddPhotos:'));
+    expect(route, contains('onMoveToUnassigned:'));
+    expect(route, contains('onDelete:'));
+    expect(route, isNot(contains('showModalBottomSheet')));
+
+    expect(
+      source,
+      contains(r"label: '写真 ${index + 1} / ${photos.length} を拡大表示'"),
+    );
+    expect(source, contains('onTap: showPhoto'));
+  });
+}
