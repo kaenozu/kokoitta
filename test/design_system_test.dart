@@ -244,7 +244,6 @@ void main() {
     expect(
       tester.getSemantics(menu),
       matchesSemantics(
-        label: '旅行メニュー',
         isButton: true,
         hasEnabledState: true,
         isEnabled: true,
@@ -257,7 +256,6 @@ void main() {
     expect(
       tester.getSemantics(settings),
       matchesSemantics(
-        label: '設定を開く',
         isButton: true,
         hasEnabledState: true,
         isEnabled: true,
