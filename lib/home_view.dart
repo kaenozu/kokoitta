@@ -14,51 +14,67 @@ extension _HomeView on _HomePageState {
   bool get _cannotAddPhotos =>
       _isDisabled || _loadError != null || _photoQuotaReached;
 
-  HomePrefectureSummary get _homePrefectureSummary {
-    final visited = _prefectures
-        .where((name) => _data.prefectureStates[name] == 'visited')
-        .length;
-    final planned = _prefectures
-        .where((name) => _data.prefectureStates[name] == 'transit')
-        .length;
-    return HomePrefectureSummary(
-      visited: visited,
-      planned: planned,
-      unvisited: OfflineJapanMap.prefectureCount - visited - planned,
-    );
-  }
-
-  HomeDashboardOperation? get _homeOperation {
+  ImportUiSnapshot? get _importSnapshot {
     final event = _importEvent;
-    if (event != null && !event.isTerminal) {
-      final cancelling = event.phase == ImportPhase.cancelled;
-      return HomeDashboardOperation(
-        title: cancelling
-            ? '写真の追加をキャンセルしています'
-            : '取り込み ${event.processed} / ${event.total}',
-        message: cancelling
-            ? '保存前の処理を安全に取り消しています。完了するまでお待ちください。'
-            : '写真を安全に処理しています。',
-        processed: event.processed,
-        total: event.total,
-        onCancel: cancelling ? null : _cancelImport,
-      );
+    if (event != null) return ImportUiSnapshot.fromEvent(event);
+    if (_photoQuotaReached) {
+      return ImportUiSnapshot.quotaReached(limit: _quotaStatus.limit);
     }
     if (_coordinator.isBusy || _isCleanupRunning) {
-      return const HomeDashboardOperation(
-        title: 'データを安全に処理しています',
-        message: '処理が完了すると写真を追加できます。',
-      );
+      return ImportUiSnapshot.blocked('データ処理が完了すると写真を追加できます。');
+    }
+    if (!_pendingDeletionAvailable && _pendingDeletion != null) {
+      return ImportUiSnapshot.blocked('削除処理の回復確認が完了すると写真を追加できます。');
     }
     return null;
+  }
+
+  KokoittaStateTone _toneForImport(ImportUiState state) => switch (state) {
+    ImportUiState.completed => KokoittaStateTone.success,
+    ImportUiState.partialFailure => KokoittaStateTone.warning,
+    ImportUiState.failed => KokoittaStateTone.error,
+    ImportUiState.cancelled || ImportUiState.blocked => KokoittaStateTone.neutral,
+    ImportUiState.quotaReached => KokoittaStateTone.quota,
+    _ => KokoittaStateTone.progress,
+  };
+
+  Widget _buildImportPanel(ImportUiSnapshot snapshot) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        KokoittaSpacing.md,
+        KokoittaSpacing.sm,
+        KokoittaSpacing.md,
+        0,
+      ),
+      child: KokoittaStatePanel(
+        tone: _toneForImport(snapshot.state),
+        title: snapshot.title,
+        message: snapshot.message,
+        progress: snapshot.isBusy && snapshot.total > 0
+            ? snapshot.processed / snapshot.total
+            : null,
+        busy: snapshot.isBusy,
+        liveRegion: snapshot.isLiveRegion,
+        secondaryAction: snapshot.canCancel
+            ? KokoittaActionButton(
+                label: 'キャンセル',
+                emphasis: KokoittaActionEmphasis.secondary,
+                onPressed: _cancelImport,
+              )
+            : null,
+      ),
+    );
   }
 
   String? get _addDisabledReason {
     if (_photoQuotaReached) {
       return '保存上限に達しています。旅行一覧で不要な写真を整理してください。';
     }
-    if (_homeOperation != null) {
+    if (_importSnapshot?.isBusy ?? false) {
       return '処理が完了すると写真を追加できます。';
+    }
+    if (_coordinator.isBusy || _isCleanupRunning) {
+      return 'データ処理が完了すると写真を追加できます。';
     }
     if (!_pendingDeletionAvailable && _pendingDeletion != null) {
       return '削除処理の回復を確認しているため、写真を追加できません。';
@@ -145,56 +161,32 @@ extension _HomeView on _HomePageState {
         ),
       );
     }
-    return _tab == 0 ? _mapView(context) : _tripView();
+    final snapshot = _importSnapshot;
+    return Column(
+      children: <Widget>[
+        if (snapshot != null && snapshot.state != ImportUiState.idle)
+          _buildImportPanel(snapshot),
+        Expanded(child: _tab == 0 ? _mapView(context) : _tripView()),
+      ],
+    );
   }
 
   Widget _mapView(BuildContext context) {
-    final operation = _homeOperation;
-    return Column(
-      children: <Widget>[
-        if (operation != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              KokoittaSpacing.md,
-              KokoittaSpacing.sm,
-              KokoittaSpacing.md,
-              0,
-            ),
-            child: KokoittaStatePanel(
-              tone: KokoittaStateTone.progress,
-              title: operation.title,
-              message: operation.message,
-              progress: operation.progress,
-              busy: true,
-              liveRegion: true,
-              secondaryAction: operation.onCancel == null
-                  ? null
-                  : KokoittaActionButton(
-                      label: 'キャンセル',
-                      emphasis: KokoittaActionEmphasis.secondary,
-                      onPressed: operation.onCancel,
-                    ),
-            ),
-          ),
-        Expanded(
-          child: HomeMapDashboard(
-            prefectureStates: _data.prefectureStates,
-            prefectureSummary: _homePrefectureSummary,
-            quota: HomeDashboardQuota(
-              count: _photoCount,
-              limit: _quotaStatus.limit,
-            ),
-            photoCount: _photoCount,
-            recentTrips: _homeRecentTrips,
-            addDisabledReason: _addDisabledReason,
-            onAddPhotos: _cannotAddPhotos ? null : _addPhotos,
-            onShowAllTrips: () => _updateState(() => _tab = 1),
-            onShowPrefectureList: _isDisabled ? null : _showPrefectureList,
-            onRestoreBackup: _isDisabled ? null : _showBackupMenu,
-            onOpenSettings: null,
-          ),
-        ),
-      ],
+    return HomeMapDashboard(
+      prefectureStates: _data.prefectureStates,
+      prefectureSummary: _homePrefectureSummary,
+      quota: HomeDashboardQuota(
+        count: _photoCount,
+        limit: _quotaStatus.limit,
+      ),
+      photoCount: _photoCount,
+      recentTrips: _homeRecentTrips,
+      addDisabledReason: _addDisabledReason,
+      onAddPhotos: _cannotAddPhotos ? null : _addPhotos,
+      onShowAllTrips: () => _updateState(() => _tab = 1),
+      onShowPrefectureList: _isDisabled ? null : _showPrefectureList,
+      onRestoreBackup: _isDisabled ? null : _showBackupMenu,
+      onOpenSettings: null,
     );
   }
 
@@ -379,7 +371,9 @@ extension _HomeView on _HomePageState {
                   Navigator.pop(routeContext);
                   _handleTripMenu(trip, 'delete');
                 },
-          busyMessage: _homeOperation?.message,
+          busyMessage: _importSnapshot?.isBusy == true
+              ? _importSnapshot?.message
+              : null,
         ),
       ),
     );
