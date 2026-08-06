@@ -81,6 +81,7 @@ try {
     $manifestXml = $null
     $newOperationIds = [System.Collections.Generic.HashSet[string]]::new()
     $manifestParseErrors = [System.Collections.Generic.List[string]]::new()
+    $unexpectedOperationStates = [System.Collections.Generic.HashSet[string]]::new()
     do {
         $candidateXml = Get-PendingDeletionManifestXml -Serial $Serial -PackageName $PackageName
         if ($candidateXml) {
@@ -97,7 +98,12 @@ try {
                 $stagedOperations = @($newOperations | Where-Object {
                     [string]$_.state -eq 'staged'
                 })
-                if ($newOperations.Count -gt 0 -and $stagedOperations.Count -eq 0) {
+                foreach ($operation in @($newOperations | Where-Object {
+                    [string]$_.state -notin @('staged', 'pending')
+                })) {
+                    [void]$unexpectedOperationStates.Add([string]$operation.state)
+                }
+                if ($newOperations.Count -gt 0 -and $stagedOperations.Count -eq 0 -and $unexpectedOperationStates.Count -eq 0) {
                     $manifestXml = $candidateXml
                     foreach ($operation in $newOperations) {
                         [void]$newOperationIds.Add([string]$operation.operationId)
@@ -112,9 +118,14 @@ try {
         Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
     if (-not $manifestXml) {
-        $diagnostic = if ($manifestParseErrors.Count -gt 0) {
-            " $($manifestParseErrors.Count) parse attempt(s) failed; last error: $($manifestParseErrors[$manifestParseErrors.Count - 1])"
-        } else { '' }
+        $diagnostics = [System.Collections.Generic.List[string]]::new()
+        if ($manifestParseErrors.Count -gt 0) {
+            [void]$diagnostics.Add("$($manifestParseErrors.Count) parse attempt(s) failed; last error: $($manifestParseErrors[$manifestParseErrors.Count - 1])")
+        }
+        if ($unexpectedOperationStates.Count -gt 0) {
+            [void]$diagnostics.Add("unexpected operation state(s): $(@($unexpectedOperationStates | Sort-Object) -join ', ')")
+        }
+        $diagnostic = if ($diagnostics.Count -gt 0) { " " + ($diagnostics -join '; ') } else { '' }
         throw "pendingDeletionManifestV1 for a new delete operation was not detected within $ManifestWaitSeconds seconds.$diagnostic"
     }
 
@@ -125,7 +136,7 @@ try {
     })
     if ($interruptedOperations.Count -eq 0) { throw 'Pending deletion manifest did not contain the newly created delete operation.' }
     if ($manifestParseErrors.Count -gt 0) {
-        Add-Check 'Manifest parse diagnostics' 'INFO' "Ignored $($manifestParseErrors.Count) transient parse attempt(s) before a complete manifest was observed."
+        Add-Check 'Manifest parse diagnostics' 'INFO' "Ignored $($manifestParseErrors.Count) transient parse attempt(s) before a complete manifest was observed. Last error: $($manifestParseErrors[$manifestParseErrors.Count - 1])"
     }
     Add-Check 'Pending manifest detection' 'PASS' "Detected $($interruptedOperations.Count) new operation(s) before process interruption."
 
