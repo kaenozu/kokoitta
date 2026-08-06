@@ -124,9 +124,7 @@ void main() {
     );
     await tester.pump();
 
-    final semanticImage = find.bySemanticsLabel(
-      '写真 1 / 1。ダブルタップで拡大または元に戻す',
-    );
+    final semanticImage = find.bySemanticsLabel('写真 1 / 1。ダブルタップで拡大または元に戻す');
     expect(semanticImage, findsOneWidget);
     expect(
       tester.getSemantics(semanticImage),
@@ -173,9 +171,6 @@ void main() {
     await tester.pump();
     expect(find.text('写真を表示できません'), findsOneWidget);
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
-    expect(
-      find.bySemanticsLabel('写真を表示できません。戻る操作は利用できます'),
-      findsOneWidget,
-    );
+    expect(find.bySemanticsLabel('写真を表示できません。戻る操作は利用できます'), findsOneWidget);
   });
 }

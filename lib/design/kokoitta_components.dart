@@ -227,9 +227,8 @@ class KokoittaStatePanel extends StatelessWidget {
                       children: <Widget>[
                         Text(
                           title,
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: appearance.foreground,
-                          ),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(color: appearance.foreground),
                         ),
                         if (message != null) ...<Widget>[
                           const SizedBox(height: KokoittaSpacing.xs),
@@ -396,7 +395,8 @@ class KokoittaTripSummaryCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               ExcludeSemantics(
-                child: image ??
+                child:
+                    image ??
                     const KokoittaPhotoPlaceholder(
                       state: KokoittaPhotoPlaceholderState.empty,
                       aspect: KokoittaImageAspect.wide,
@@ -460,11 +460,7 @@ class KokoittaSemanticIconButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox.square(
       dimension: KokoittaSize.minimumTapTarget,
-      child: IconButton(
-        tooltip: label,
-        onPressed: onPressed,
-        icon: Icon(icon),
-      ),
+      child: IconButton(tooltip: label, onPressed: onPressed, icon: Icon(icon)),
     );
   }
 }

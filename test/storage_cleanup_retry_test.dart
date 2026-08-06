@@ -63,10 +63,7 @@ void main() {
 
     var failOncePerDir = true;
     var deleteCallCount = 0;
-    Future<void> deleteDirectory(
-      String path, {
-      bool recursive = false,
-    }) async {
+    Future<void> deleteDirectory(String path, {bool recursive = false}) async {
       deleteCallCount += 1;
       if (failOncePerDir) {
         failOncePerDir = false;

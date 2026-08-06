@@ -28,6 +28,8 @@ The script builds and installs the debug APK, starts the app, waits for `pending
 
 Use `-KeepInstalledData` when an existing local trip should be used. Use `-ApkPath` with `-SkipBuild` to validate an exact APK.
 
+When `-KeepInstalledData` is used, the runner records operation IDs already present before the manual delete and accepts only a newly created operation. An old `pending`, `undoFailed`, or `cleanupFailed` operation cannot satisfy the interruption check.
+
 A PASS requires:
 
 - the pending manifest is detected before the interruption;

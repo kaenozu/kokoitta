@@ -2,10 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-typedef PrefectureStateTapHandler = Future<void> Function(
-  String name,
-  String currentState,
-);
+typedef PrefectureStateTapHandler =
+    Future<void> Function(String name, String currentState);
 
 /// Supplies the persistence-aware prefecture action without coupling the map
 /// widget to the application's storage implementation.
@@ -59,9 +57,7 @@ class OfflineJapanMap extends StatelessWidget {
             builder: (context, constraints) {
               final width = constraints.maxWidth;
               if (!width.isFinite || width <= 0) {
-                return const Text(
-                  '日本地図を表示できません。下の都道府県一覧を利用してください。',
-                );
+                return const Text('日本地図を表示できません。下の都道府県一覧を利用してください。');
               }
 
               const columns = 10;
@@ -73,31 +69,33 @@ class OfflineJapanMap extends StatelessWidget {
                 height: cellHeight * rows,
                 child: Stack(
                   clipBehavior: Clip.none,
-                  children: _prefectures.map((prefecture) {
-                    final state = states[prefecture.name] ?? 'unvisited';
-                    final VoidCallback? onTap;
-                    if (onPrefectureTap != null) {
-                      onTap = () => onPrefectureTap!(prefecture.name);
-                    } else if (inheritedAction != null) {
-                      onTap = () => inheritedAction(prefecture.name, state);
-                    } else {
-                      onTap = null;
-                    }
-                    return Positioned(
-                      left: prefecture.column * cellWidth,
-                      top: prefecture.row * cellHeight,
-                      width: prefecture.columnSpan * cellWidth,
-                      height: prefecture.rowSpan * cellHeight,
-                      child: Padding(
-                        padding: const EdgeInsets.all(1.5),
-                        child: _PrefectureTile(
-                          prefecture: prefecture,
-                          state: state,
-                          onTap: onTap,
-                        ),
-                      ),
-                    );
-                  }).toList(growable: false),
+                  children: _prefectures
+                      .map((prefecture) {
+                        final state = states[prefecture.name] ?? 'unvisited';
+                        final VoidCallback? onTap;
+                        if (onPrefectureTap != null) {
+                          onTap = () => onPrefectureTap!(prefecture.name);
+                        } else if (inheritedAction != null) {
+                          onTap = () => inheritedAction(prefecture.name, state);
+                        } else {
+                          onTap = null;
+                        }
+                        return Positioned(
+                          left: prefecture.column * cellWidth,
+                          top: prefecture.row * cellHeight,
+                          width: prefecture.columnSpan * cellWidth,
+                          height: prefecture.rowSpan * cellHeight,
+                          child: Padding(
+                            padding: const EdgeInsets.all(1.5),
+                            child: _PrefectureTile(
+                              prefecture: prefecture,
+                              state: state,
+                              onTap: onTap,
+                            ),
+                          ),
+                        );
+                      })
+                      .toList(growable: false),
                 ),
               );
             },
@@ -143,16 +141,10 @@ class _LegendItem extends StatelessWidget {
             height: 18,
             decoration: ShapeDecoration(
               color: colors.background,
-              shape: _HexagonBorder(
-                side: BorderSide(color: colors.border),
-              ),
+              shape: _HexagonBorder(side: BorderSide(color: colors.border)),
             ),
             alignment: Alignment.center,
-            child: Icon(
-              _stateIcon(state),
-              size: 12,
-              color: colors.foreground,
-            ),
+            child: Icon(_stateIcon(state), size: 12, color: colors.foreground),
           ),
           const SizedBox(width: 4),
           ExcludeSemantics(child: Text(_stateLabel(state))),

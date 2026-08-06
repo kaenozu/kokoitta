@@ -37,12 +37,31 @@ void main() {
           failed: 1,
           isTerminal: true,
           successes: <ImportedFile>[
-            ImportedFile(path: '/private/a', name: 'a.jpg', mimeType: 'image/jpeg', size: 1),
-            ImportedFile(path: '/private/b', name: 'b.jpg', mimeType: 'image/jpeg', size: 1),
-            ImportedFile(path: '/private/c', name: 'c.jpg', mimeType: 'image/jpeg', size: 1),
+            ImportedFile(
+              path: '/private/a',
+              name: 'a.jpg',
+              mimeType: 'image/jpeg',
+              size: 1,
+            ),
+            ImportedFile(
+              path: '/private/b',
+              name: 'b.jpg',
+              mimeType: 'image/jpeg',
+              size: 1,
+            ),
+            ImportedFile(
+              path: '/private/c',
+              name: 'c.jpg',
+              mimeType: 'image/jpeg',
+              size: 1,
+            ),
           ],
           failures: <ImportFailure>[
-            ImportFailure(index: 3, errorCode: 'decode_failed', reason: '/private/device/path'),
+            ImportFailure(
+              index: 3,
+              errorCode: 'decode_failed',
+              reason: '/private/device/path',
+            ),
           ],
         ),
       );

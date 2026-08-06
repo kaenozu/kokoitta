@@ -58,6 +58,19 @@ try {
     $beforeSnapshot = Get-AppSandboxSnapshot -Serial $Serial -PackageName $PackageName
     $beforeSnapshot | Set-Content -LiteralPath (Join-Path $runDirectory 'evidence/sandbox-before.txt') -Encoding utf8
 
+    $baselineOperationIds = [System.Collections.Generic.HashSet[string]]::new()
+    $baselineManifestXml = Get-PendingDeletionManifestXml -Serial $Serial -PackageName $PackageName
+    if ($baselineManifestXml) {
+        $baselineManifest = ConvertFrom-PendingDeletionManifestXml -XmlText $baselineManifestXml
+        if (-not $baselineManifest -or -not $baselineManifest.operations) {
+            throw 'Existing pending deletion manifest was present but could not be parsed before the manual delete.'
+        }
+        foreach ($operation in @($baselineManifest.operations)) {
+            [void]$baselineOperationIds.Add([string]$operation.operationId)
+        }
+    }
+    Add-Check 'Pre-existing operation baseline' 'INFO' "Ignoring $($baselineOperationIds.Count) operation(s) already present before the manual delete."
+
     if (-not $NonInteractive) {
         Write-Host ''
         Write-Host 'On the device, create or use a trip with at least one photo, then tap delete.' -ForegroundColor Cyan
@@ -66,16 +79,66 @@ try {
 
     $deadline = (Get-Date).AddSeconds($ManifestWaitSeconds)
     $manifestXml = $null
+    $newOperationIds = [System.Collections.Generic.HashSet[string]]::new()
+    $manifestParseErrors = [System.Collections.Generic.List[string]]::new()
+    $unexpectedOperationStates = [System.Collections.Generic.HashSet[string]]::new()
     do {
-        $manifestXml = Get-PendingDeletionManifestXml -Serial $Serial -PackageName $PackageName
-        if ($manifestXml) { break }
+        $candidateXml = Get-PendingDeletionManifestXml -Serial $Serial -PackageName $PackageName
+        if ($candidateXml) {
+            try {
+                $candidateManifest = ConvertFrom-PendingDeletionManifestXml -XmlText $candidateXml
+                $candidateOperations = if ($candidateManifest -and $candidateManifest.operations) {
+                    @($candidateManifest.operations)
+                } else {
+                    @()
+                }
+                $newOperations = @($candidateOperations | Where-Object {
+                    -not $baselineOperationIds.Contains([string]$_.operationId)
+                })
+                $stagedOperations = @($newOperations | Where-Object {
+                    [string]$_.state -eq 'staged'
+                })
+                foreach ($operation in @($newOperations | Where-Object {
+                    [string]$_.state -notin @('staged', 'pending')
+                })) {
+                    [void]$unexpectedOperationStates.Add([string]$operation.state)
+                }
+                if ($newOperations.Count -gt 0 -and $stagedOperations.Count -eq 0 -and $unexpectedOperationStates.Count -eq 0) {
+                    $manifestXml = $candidateXml
+                    foreach ($operation in $newOperations) {
+                        [void]$newOperationIds.Add([string]$operation.operationId)
+                    }
+                    break
+                }
+            } catch {
+                # Keep waiting while the app is still writing the manifest.
+                [void]$manifestParseErrors.Add($_.Exception.Message)
+            }
+        }
         Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
-    if (-not $manifestXml) { throw "pendingDeletionManifestV1 was not detected within $ManifestWaitSeconds seconds." }
+    if (-not $manifestXml) {
+        $diagnostics = [System.Collections.Generic.List[string]]::new()
+        if ($manifestParseErrors.Count -gt 0) {
+            [void]$diagnostics.Add("$($manifestParseErrors.Count) parse attempt(s) failed; last error: $($manifestParseErrors[$manifestParseErrors.Count - 1])")
+        }
+        if ($unexpectedOperationStates.Count -gt 0) {
+            [void]$diagnostics.Add("unexpected operation state(s): $(@($unexpectedOperationStates | Sort-Object) -join ', ')")
+        }
+        $diagnostic = if ($diagnostics.Count -gt 0) { " " + ($diagnostics -join '; ') } else { '' }
+        throw "pendingDeletionManifestV1 for a new delete operation was not detected within $ManifestWaitSeconds seconds.$diagnostic"
+    }
 
     $interruptedManifest = ConvertFrom-PendingDeletionManifestXml -XmlText $manifestXml
     if (-not $interruptedManifest -or -not $interruptedManifest.operations) { throw 'Pending deletion manifest was present but could not be parsed.' }
-    Add-Check 'Pending manifest detection' 'PASS' "Detected $(@($interruptedManifest.operations).Count) operation(s) before process interruption."
+    $interruptedOperations = @($interruptedManifest.operations | Where-Object {
+        $newOperationIds.Contains([string]$_.operationId)
+    })
+    if ($interruptedOperations.Count -eq 0) { throw 'Pending deletion manifest did not contain the newly created delete operation.' }
+    if ($manifestParseErrors.Count -gt 0) {
+        Add-Check 'Manifest parse diagnostics' 'INFO' "Ignored $($manifestParseErrors.Count) transient parse attempt(s) before a complete manifest was observed. Last error: $($manifestParseErrors[$manifestParseErrors.Count - 1])"
+    }
+    Add-Check 'Pending manifest detection' 'PASS' "Detected $($interruptedOperations.Count) new operation(s) before process interruption."
 
     Invoke-Adb -Serial $Serial -Arguments @('shell', 'am', 'force-stop', $PackageName) -LogPath (Join-Path $runDirectory 'logs/force-stop.log') | Out-Null
     Invoke-Adb -Serial $Serial -Arguments @('shell', 'am', 'kill', $PackageName) -AllowFailure | Out-Null
@@ -91,7 +154,13 @@ try {
     $afterManifest = ConvertFrom-PendingDeletionManifestXml -XmlText $afterXml
 
     $contradictions = [System.Collections.Generic.List[string]]::new()
-    $operationsToCheck = if ($afterManifest -and $afterManifest.operations) { @($afterManifest.operations) } else { @($interruptedManifest.operations) }
+    $afterOperations = if ($afterManifest -and $afterManifest.operations) {
+        @($afterManifest.operations | Where-Object { $newOperationIds.Contains([string]$_.operationId) })
+    } else { @() }
+    if ($afterManifest -and $afterOperations.Count -eq 0) {
+        $contradictions.Add('The newly created delete operation disappeared from the manifest after restart.')
+    }
+    $operationsToCheck = if ($afterOperations.Count -gt 0) { $afterOperations } else { $interruptedOperations }
     foreach ($operation in $operationsToCheck) {
         foreach ($item in @($operation.items)) {
             $originalExists = Test-AppPathExists -Serial $Serial -PackageName $PackageName -Path ([string]$item.originalPath)
@@ -116,8 +185,8 @@ try {
         }
     }
 
-    if ($afterManifest -and $afterManifest.operations) {
-        $invalidStates = @($afterManifest.operations | Where-Object { [string]$_.state -notin @('pending', 'undoFailed', 'undoCommitFailed', 'undoRollbackFailed', 'cleanupFailed') })
+    if ($afterOperations.Count -gt 0) {
+        $invalidStates = @($afterOperations | Where-Object { [string]$_.state -notin @('pending', 'undoFailed', 'undoCommitFailed', 'undoRollbackFailed', 'cleanupFailed') })
         if ($invalidStates.Count -gt 0) { $contradictions.Add('Recovery left one or more operations in an invalid staged state.') }
     }
 
@@ -127,7 +196,7 @@ try {
         Add-Check 'Manifest/original/trash consistency' 'FAIL' ($contradictions -join ' ')
     }
 
-    $crashes = Get-AppCrashSummary -Serial $Serial -PackageName $PackageName -LogPath (Join-Path $runDirectory 'logs/logcat.txt')
+    $crashes = @(Get-AppCrashSummary -Serial $Serial -PackageName $PackageName -LogPath (Join-Path $runDirectory 'logs/logcat.txt'))
     if ($crashes.Count -eq 0) { Add-Check 'Crash/ANR/OOM logcat' 'PASS' 'No matching fatal event was found.' }
     else { Add-Check 'Crash/ANR/OOM logcat' 'FAIL' ($crashes -join ' | ') }
 

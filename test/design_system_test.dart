@@ -70,8 +70,7 @@ void main() {
                       children: <Widget>[
                         KokoittaSectionHeader(
                           title: '最近の旅行と思い出の写真を振り返る',
-                          supportingText:
-                              '文字を大きくしてもタイトルと操作を省略せず表示します。',
+                          supportingText: '文字を大きくしてもタイトルと操作を省略せず表示します。',
                           trailing: KokoittaActionButton(
                             label: 'すべて見る',
                             emphasis: KokoittaActionEmphasis.secondary,

@@ -99,10 +99,20 @@ function Get-AppSandboxSnapshot {
 function Get-PendingDeletionManifestXml {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Serial, [Parameter(Mandatory)][string]$PackageName)
-    $script = 'cd /data/data/' + $PackageName + ' 2>/dev/null || exit 1; for f in shared_prefs/*.xml; do [ -f "$f" ] || continue; if grep -q "pendingDeletionManifestV1" "$f"; then cat "$f"; exit 0; fi; done; exit 2'
-    $result = Invoke-Adb -Serial $Serial -Arguments @('shell', 'run-as', $PackageName, 'sh', '-c', $script) -AllowFailure
+    # Flutter's shared_preferences Android backend uses this stable file name.
+    # Reading it directly avoids losing the shell script's quoting through the
+    # Windows PowerShell -> adb -> Android shell argument boundary.
+    $result = Invoke-Adb -Serial $Serial -Arguments @(
+        'shell',
+        'run-as',
+        $PackageName,
+        'cat',
+        'shared_prefs/FlutterSharedPreferences.xml'
+    ) -AllowFailure
     if ($result.ExitCode -ne 0) { return $null }
-    return ($result.Lines -join "`n")
+    $xml = $result.Lines -join "`n"
+    if ($xml -notmatch 'pendingDeletionManifestV1') { return $null }
+    return $xml
 }
 
 function ConvertFrom-PendingDeletionManifestXml {

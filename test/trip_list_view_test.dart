@@ -20,16 +20,8 @@ void main() {
         capturedAt: DateTime(2026, 5, 1),
         location: '東京都',
       ),
-      Photo(
-        id: '3',
-        file: File('third.jpg'),
-        location: '京都府',
-      ),
-      Photo(
-        id: '4',
-        file: File('fourth.jpg'),
-        location: '長野県',
-      ),
+      Photo(id: '3', file: File('third.jpg'), location: '京都府'),
+      Photo(id: '4', file: File('fourth.jpg'), location: '長野県'),
     ];
 
     expect(formatTripCapturedAt(photos), '2026年5月1日〜2026年5月3日');
@@ -123,14 +115,14 @@ void main() {
     addTearDown(tester.view.reset);
 
     TripListItem item(String title) => TripListItem(
-          title: title,
-          photoCount: 1,
-          image: const KokoittaPhotoPlaceholder(
-            state: KokoittaPhotoPlaceholderState.empty,
-            aspect: KokoittaImageAspect.wide,
-          ),
-          onTap: () {},
-        );
+      title: title,
+      photoCount: 1,
+      image: const KokoittaPhotoPlaceholder(
+        state: KokoittaPhotoPlaceholderState.empty,
+        aspect: KokoittaImageAspect.wide,
+      ),
+      onTap: () {},
+    );
 
     await tester.pumpWidget(
       MaterialApp(

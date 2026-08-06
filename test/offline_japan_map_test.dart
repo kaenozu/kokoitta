@@ -59,7 +59,9 @@ void main() {
       '13': '東京都',
       '47': '沖縄県',
     }.entries) {
-      final finder = find.byKey(ValueKey<String>('prefecture-map-${entry.key}'));
+      final finder = find.byKey(
+        ValueKey<String>('prefecture-map-${entry.key}'),
+      );
       await tester.ensureVisible(finder);
       await tester.tap(finder);
       await tester.pump();
