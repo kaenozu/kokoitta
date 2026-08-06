@@ -55,7 +55,7 @@ void main() {
       MaterialApp(
         theme: buildKokoittaTheme(Brightness.light),
         home: MediaQuery(
-          data: MediaQueryData(textScaler: TextScaler.linear(2)),
+          data: const MediaQueryData(textScaler: TextScaler.linear(2)),
           child: Scaffold(
             body: SingleChildScrollView(
               child: Center(
@@ -65,7 +65,7 @@ void main() {
                     padding: const EdgeInsets.all(KokoittaSpacing.md),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
+                      children: <Widget>[
                         KokoittaSectionHeader(
                           title: '最近の旅行と思い出の写真を振り返る',
                           supportingText:
@@ -140,7 +140,7 @@ void main() {
         home: Scaffold(
           body: SingleChildScrollView(
             child: Column(
-              children: [
+              children: <Widget>[
                 for (final tone in KokoittaStateTone.values)
                   Padding(
                     padding: const EdgeInsets.all(KokoittaSpacing.xs),
@@ -164,18 +164,28 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('roles labels and live state are exposed to TalkBack', (
+  testWidgets('roles labels and tap actions are exposed to TalkBack', (
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
+    var tripTapCount = 0;
+    var menuTapCount = 0;
+    var settingsTapCount = 0;
+
     await tester.pumpWidget(
       MaterialApp(
         theme: buildKokoittaTheme(Brightness.light),
         home: Scaffold(
           body: SingleChildScrollView(
             child: Column(
-              children: [
-                const KokoittaSectionHeader(title: '旅行'),
+              children: <Widget>[
+                KokoittaSectionHeader(
+                  title: '旅行',
+                  trailing: KokoittaActionButton(
+                    label: 'すべて見る',
+                    onPressed: () {},
+                  ),
+                ),
                 KokoittaStatePanel(
                   tone: KokoittaStateTone.progress,
                   title: '写真を追加しています',
@@ -186,12 +196,17 @@ void main() {
                 KokoittaTripSummaryCard(
                   title: '夏休み',
                   semanticLabel: '旅行、夏休み、写真4枚、開く',
-                  onTap: () {},
+                  onTap: () => tripTapCount += 1,
+                  overflow: IconButton(
+                    tooltip: '旅行メニュー',
+                    onPressed: () => menuTapCount += 1,
+                    icon: const Icon(Icons.more_vert),
+                  ),
                 ),
                 KokoittaSemanticIconButton(
                   icon: Icons.settings_outlined,
                   label: '設定を開く',
-                  onPressed: () {},
+                  onPressed: () => settingsTapCount += 1,
                 ),
               ],
             ),
@@ -208,27 +223,53 @@ void main() {
       tester.getSemantics(find.byType(KokoittaStatePanel)),
       matchesSemantics(isLiveRegion: true),
     );
+
+    final trip = find.bySemanticsLabel('旅行、夏休み、写真4枚、開く');
+    expect(trip, findsOneWidget);
     expect(
-      tester.getSemantics(find.byType(KokoittaTripSummaryCard)),
+      tester.getSemantics(trip),
       matchesSemantics(
         label: '旅行、夏休み、写真4枚、開く',
         isButton: true,
         hasEnabledState: true,
         isEnabled: true,
+        hasTapAction: true,
       ),
     );
 
-    await tester.ensureVisible(find.byType(KokoittaSemanticIconButton));
-    await tester.pump();
+    final menu = find.byTooltip('旅行メニュー');
+    expect(menu, findsOneWidget);
     expect(
-      tester.getSemantics(find.byType(KokoittaSemanticIconButton)),
+      tester.getSemantics(menu),
+      matchesSemantics(
+        label: '旅行メニュー',
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: true,
+        hasTapAction: true,
+      ),
+    );
+
+    final settings = find.byTooltip('設定を開く');
+    expect(settings, findsOneWidget);
+    expect(
+      tester.getSemantics(settings),
       matchesSemantics(
         label: '設定を開く',
         isButton: true,
         hasEnabledState: true,
         isEnabled: true,
+        hasTapAction: true,
       ),
     );
+
+    await tester.tap(trip);
+    await tester.tap(menu);
+    await tester.tap(settings);
+    await tester.pump();
+    expect(tripTapCount, 1);
+    expect(menuTapCount, 1);
+    expect(settingsTapCount, 1);
     semantics.dispose();
   });
 }
