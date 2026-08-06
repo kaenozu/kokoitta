@@ -6,6 +6,8 @@ extension _HomeBackupActions on _HomePageState {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
+      useSafeArea: true,
       builder: (sheetContext) => StreamBuilder<OperationStatus>(
         stream: _coordinator.statusStream,
         initialData: _coordinator.status,
@@ -16,50 +18,28 @@ extension _HomeBackupActions on _HomePageState {
 
   Widget _buildBackupMenu(BuildContext sheetContext) {
     final isAnyBusy = _coordinator.isBusy;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'データ保護',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ),
-            const SizedBox(height: 12),
-            ListTile(
-              enabled: _loadError == null && !isAnyBusy,
-              leading: const Icon(Icons.backup_outlined),
-              title: const Text('完全バックアップを作成'),
-              subtitle: _coordinator.isBackingUp
-                  ? const Text('バックアップ作成中…')
-                  : const Text('旅行・旅行未設定・地図状態・写真をZIPに保存'),
-              onTap: isAnyBusy
-                  ? null
-                  : () {
-                      Navigator.pop(sheetContext);
-                      _createBackup();
-                    },
-            ),
-            ListTile(
-              enabled: !isAnyBusy,
-              leading: const Icon(Icons.restore),
-              title: const Text('完全復元'),
-              subtitle: _coordinator.isRestoring
-                  ? const Text('復元処理中…')
-                  : const Text('検証後、現在のデータを安全に置き換え'),
-              onTap: isAnyBusy
-                  ? null
-                  : () {
-                      Navigator.pop(sheetContext);
-                      _restoreBackup();
-                    },
-            ),
-          ],
-        ),
+    final busyMessage = _coordinator.isBackingUp
+        ? 'バックアップを作成しています。共有先を選ぶまでお待ちください。'
+        : _coordinator.isRestoring
+        ? 'バックアップを検証または復元しています。'
+        : isAnyBusy
+        ? '別のデータ処理が完了するまでお待ちください。'
+        : null;
+    return FractionallySizedBox(
+      heightFactor: 0.92,
+      child: SettingsBackupView(
+        isBusy: isAnyBusy,
+        canCreateBackup: _loadError == null,
+        canRestore: true,
+        busyMessage: busyMessage,
+        onCreateBackup: () {
+          Navigator.pop(sheetContext);
+          unawaited(_createBackup());
+        },
+        onRestore: () {
+          Navigator.pop(sheetContext);
+          unawaited(_restoreBackup());
+        },
       ),
     );
   }
@@ -95,8 +75,9 @@ extension _HomeBackupActions on _HomePageState {
       final confirmed = await _confirm(
         title: '完全復元',
         message:
-            '${prepared.tripCount}旅行・${prepared.photoCount}枚の写真を確認しました。現在のデータを置き換えますか？\n\n置き換え前のデータは安全バックアップとして端末内に保存します。',
-        confirmLabel: '置き換える',
+            '${prepared.tripCount}旅行・${prepared.photoCount}枚の写真を確認しました。現在のデータを置き換えます。\n\n置き換え前のデータは安全バックアップとして端末内に保存します。',
+        confirmLabel: '現在のデータを置き換える',
+        destructive: true,
       );
       if (!confirmed) {
         await prepared.discard();
@@ -161,10 +142,13 @@ extension _HomeBackupActions on _HomePageState {
     return await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
-            title: Text(title),
+            scrollable: true,
+            title: Semantics(header: true, child: Text(title)),
             content: Text(message),
+            actionsAlignment: MainAxisAlignment.end,
             actions: <Widget>[
               TextButton(
+                autofocus: true,
                 onPressed: () => Navigator.pop(dialogContext, false),
                 child: const Text('キャンセル'),
               ),
@@ -172,6 +156,7 @@ extension _HomeBackupActions on _HomePageState {
                 style: destructive
                     ? FilledButton.styleFrom(
                         backgroundColor: Theme.of(context).colorScheme.error,
+                        foregroundColor: Theme.of(context).colorScheme.onError,
                       )
                     : null,
                 onPressed: () => Navigator.pop(dialogContext, true),
