@@ -14,6 +14,20 @@ extension _HomeView on _HomePageState {
   bool get _cannotAddPhotos =>
       _isDisabled || _loadError != null || _photoQuotaReached;
 
+  HomePrefectureSummary get _homePrefectureSummary {
+    final visited = _prefectures
+        .where((name) => _data.prefectureStates[name] == 'visited')
+        .length;
+    final planned = _prefectures
+        .where((name) => _data.prefectureStates[name] == 'transit')
+        .length;
+    return HomePrefectureSummary(
+      visited: visited,
+      planned: planned,
+      unvisited: OfflineJapanMap.prefectureCount - visited - planned,
+    );
+  }
+
   ImportUiSnapshot? get _importSnapshot {
     final event = _importEvent;
     if (event != null) return ImportUiSnapshot.fromEvent(event);
