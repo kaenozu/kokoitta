@@ -39,13 +39,13 @@ Widget _defaultPhotoViewerImageBuilder(
   BuildContext context,
   File file,
   int cacheWidth,
-  String semanticLabel,
+  String _,
 ) {
   return Image.file(
     file,
     fit: BoxFit.contain,
     cacheWidth: cacheWidth,
-    semanticLabel: semanticLabel,
+    excludeFromSemantics: true,
     errorBuilder: (_, _, _) => const PhotoLoadFallback(),
   );
 }
@@ -173,28 +173,27 @@ class _PhotoViewerState extends State<PhotoViewer> {
                     '写真 ${index + 1} / ${widget.photos.length}。ダブルタップで拡大または元に戻す';
                 return Semantics(
                   container: true,
+                  explicitChildNodes: true,
                   image: true,
                   label: semanticLabel,
                   onTap: () => _toggleZoom(index),
-                  child: ExcludeSemantics(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onDoubleTap: () => _toggleZoom(index),
-                      child: InteractiveViewer(
-                        key: ValueKey<String>('photo-viewer-$index'),
-                        transformationController: transformation,
-                        minScale: 1,
-                        maxScale: 4,
-                        child: Center(
-                          child:
-                              (widget.imageBuilder ??
-                              _defaultPhotoViewerImageBuilder)(
-                                context,
-                                File(widget.photos[index].file.path),
-                                dimension,
-                                '写真 ${index + 1}',
-                              ),
-                        ),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onDoubleTap: () => _toggleZoom(index),
+                    child: InteractiveViewer(
+                      key: ValueKey<String>('photo-viewer-$index'),
+                      transformationController: transformation,
+                      minScale: 1,
+                      maxScale: 4,
+                      child: Center(
+                        child:
+                            (widget.imageBuilder ??
+                            _defaultPhotoViewerImageBuilder)(
+                              context,
+                              File(widget.photos[index].file.path),
+                              dimension,
+                              '写真 ${index + 1}',
+                            ),
                       ),
                     ),
                   ),
