@@ -26,7 +26,11 @@ void main() {
     );
     expect(source.contains('enabled: !_isDisabled'), isTrue);
     expect(
-      source.contains('onPressed: _cannotAddPhotos ? null : _addPhotos'),
+      source.contains('onAddPhotos: _cannotAddPhotos ? null : _addPhotos'),
+      isTrue,
+    );
+    expect(
+      source.contains('onRestoreBackup: _isDisabled ? null : _showBackupMenu'),
       isTrue,
     );
   });
