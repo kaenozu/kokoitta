@@ -123,7 +123,7 @@ void main() {
       ]) {
         expect(find.text(title), findsOneWidget);
       }
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('写真を確認しています。'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
