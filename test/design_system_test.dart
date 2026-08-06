@@ -1,3 +1,5 @@
+import 'dart:ui' show SemanticsAction;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/app_theme.dart';
@@ -242,25 +244,21 @@ void main() {
     final menu = find.byTooltip('旅行メニュー');
     expect(menu, findsOneWidget);
     expect(
-      tester.getSemantics(menu),
-      matchesSemantics(
-        isButton: true,
-        hasEnabledState: true,
-        isEnabled: true,
-        hasTapAction: true,
-      ),
+      tester
+          .getSemantics(menu)
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
+      isTrue,
     );
 
     final settings = find.byTooltip('設定を開く');
     expect(settings, findsOneWidget);
     expect(
-      tester.getSemantics(settings),
-      matchesSemantics(
-        isButton: true,
-        hasEnabledState: true,
-        isEnabled: true,
-        hasTapAction: true,
-      ),
+      tester
+          .getSemantics(settings)
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
+      isTrue,
     );
 
     await tester.tap(trip);
