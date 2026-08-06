@@ -348,42 +348,38 @@ extension _HomeView on _HomePageState {
   }
 
   void _showTrip(Trip trip) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                trip.title,
-                style: Theme.of(sheetContext).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 16),
-              SizedBox(height: 260, child: _photoGrid(trip.photos)),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () => _shareFiles(trip.photos, trip.title),
-                icon: const Icon(Icons.share),
-                label: const Text('写真を共有'),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: _cannotAddPhotos
-                    ? null
-                    : () {
-                        Navigator.pop(sheetContext);
-                        _addPhotos(tripId: trip.id);
-                      },
-                icon: const Icon(Icons.add),
-                label: const Text('この旅行に写真を追加'),
-              ),
-            ],
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (routeContext) => TripDetailView(
+          title: trip.title,
+          photos: trip.photos,
+          capturedAtLabel: formatTripCapturedAt(trip.photos),
+          locationLabel: formatTripLocations(trip.photos),
+          onPhotoTap: (index) => _showPhotoViewer(
+            trip.photos,
+            index,
+            title: trip.title,
           ),
+          onShare: () => _shareFiles(trip.photos, trip.title),
+          onAddPhotos: _cannotAddPhotos
+              ? null
+              : () {
+                  Navigator.pop(routeContext);
+                  _addPhotos(tripId: trip.id);
+                },
+          onMoveToUnassigned: _isDisabled
+              ? null
+              : () {
+                  Navigator.pop(routeContext);
+                  _handleTripMenu(trip, 'move');
+                },
+          onDelete: _isDisabled
+              ? null
+              : () {
+                  Navigator.pop(routeContext);
+                  _handleTripMenu(trip, 'delete');
+                },
+          busyMessage: _homeOperation?.message,
         ),
       ),
     );
@@ -432,41 +428,58 @@ extension _HomeView on _HomePageState {
         mainAxisSpacing: 4,
       ),
       itemCount: photos.length,
-      itemBuilder: (context, index) => Semantics(
-        button: true,
-        label: '写真 ${index + 1} / ${photos.length} を拡大表示',
-        child: GestureDetector(
-          onTap: () => _showPhotoViewer(photos, index),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final dimension = thumbnailDecodeDimension(
-                logicalWidth: constraints.maxWidth,
-                logicalHeight: constraints.maxHeight,
-                devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
-              );
-              return Image.file(
-                photos[index].file,
-                fit: BoxFit.cover,
-                cacheWidth: dimension,
-                errorBuilder: (_, _, _) => const ColoredBox(
-                  color: Color(0xffeeeeee),
-                  child: Icon(Icons.broken_image_outlined),
-                ),
-              );
-            },
+      itemBuilder: (context, index) {
+        void showPhoto() => _showPhotoViewer(photos, index);
+        return Semantics(
+          button: true,
+          enabled: true,
+          image: true,
+          label: '写真 ${index + 1} / ${photos.length} を拡大表示',
+          onTap: showPhoto,
+          child: ExcludeSemantics(
+            child: GestureDetector(
+              onTap: showPhoto,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final dimension = thumbnailDecodeDimension(
+                    logicalWidth: constraints.maxWidth,
+                    logicalHeight: constraints.maxHeight,
+                    devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+                  );
+                  return Image.file(
+                    photos[index].file,
+                    fit: BoxFit.cover,
+                    cacheWidth: dimension,
+                    errorBuilder: (_, _, _) => const ColoredBox(
+                      color: Color(0xffeeeeee),
+                      child: Icon(Icons.broken_image_outlined),
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
 
 extension _PhotoViewerActions on _HomePageState {
-  void _showPhotoViewer(List<Photo> photos, int initialIndex) {
+  void _showPhotoViewer(
+    List<Photo> photos,
+    int initialIndex, {
+    String? title,
+  }) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (_) => PhotoViewer(photos: photos, initialIndex: initialIndex),
+        builder: (_) => PhotoViewer(
+          title: title,
+          photos: photos,
+          initialIndex: initialIndex,
+          onShare: (photo) => _shareFiles(<Photo>[photo], title ?? '写真'),
+        ),
       ),
     );
   }
