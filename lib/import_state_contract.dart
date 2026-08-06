@@ -95,9 +95,18 @@ class ImportUiSnapshot {
 
     final copy = switch (state) {
       ImportUiState.idle => ('写真を追加できます', '端末から写真を選べます。'),
-      ImportUiState.validating => ('写真を確認しています', '追加できる形式か安全に確認しています。'),
-      ImportUiState.copying => ('写真を取り込んでいます', '${event.processed} / ${event.total}件を処理しました。'),
-      ImportUiState.saving => ('写真を保存しています', '端末内へ安全に保存しています。'),
+      ImportUiState.validating => (
+        event.total > 0 ? '取り込み ${event.processed} / ${event.total}' : '写真を確認しています',
+        '追加できる形式か安全に確認しています。',
+      ),
+      ImportUiState.copying => (
+        '取り込み ${event.processed} / ${event.total}',
+        '${event.processed} / ${event.total}件を処理しました。',
+      ),
+      ImportUiState.saving => (
+        event.total > 0 ? '取り込み ${event.processed} / ${event.total}' : '写真を保存しています',
+        '端末内へ安全に保存しています。',
+      ),
       ImportUiState.completed => ('写真を保存しました', '${event.succeeded}件を追加しました。'),
       ImportUiState.partialFailure => (
         '一部の写真を保存できませんでした',
