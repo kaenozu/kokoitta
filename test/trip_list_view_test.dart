@@ -66,9 +66,14 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('cards expose one semantic navigation target with metadata', (
+  testWidgets('cards expose and execute one semantic navigation action', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
+    var taps = 0;
+    const label =
+        'とても長い旅行タイトルでも折り返して表示される旅行、24枚の写真、'
+        '2026年4月1日〜2026年4月5日、埼玉県・東京都。詳細を開く';
     await tester.pumpWidget(
       MaterialApp(
         theme: buildKokoittaTheme(Brightness.dark),
@@ -83,7 +88,7 @@ void main() {
                 state: KokoittaPhotoPlaceholderState.missing,
                 aspect: KokoittaImageAspect.wide,
               ),
-              onTap: () {},
+              onTap: () => taps += 1,
             ),
           ],
           onAddPhotos: () {},
@@ -93,15 +98,23 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    final card = find.bySemanticsLabel(label);
+    expect(card, findsOneWidget);
     expect(
-      find.bySemanticsLabel(
-        'とても長い旅行タイトルでも折り返して表示される旅行、24枚の写真、'
-        '2026年4月1日〜2026年4月5日、埼玉県・東京都。詳細を開く',
+      tester.getSemantics(card),
+      matchesSemantics(
+        label: label,
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: true,
+        hasTapAction: true,
       ),
-      findsOneWidget,
     );
+    await tester.tap(card);
+    expect(taps, 1);
     expect(find.text('24枚の思い出'), findsOneWidget);
     expect(tester.takeException(), isNull);
+    semantics.dispose();
   });
 
   testWidgets('tablet width arranges cards in two columns', (tester) async {
