@@ -234,22 +234,18 @@ extension _HomeView on _HomePageState {
                     final state = _data.prefectureStates[name] ?? 'unvisited';
                     final currentLabel = _prefectureStateLabel(state);
                     final nextLabel = _prefectureNextStateLabel(state);
-                    return Semantics(
-                      button: true,
-                      label: '$name、$currentLabel。タップすると$nextLabelに変更',
-                      child: ExcludeSemantics(
-                        child: ListTile(
-                          minTileHeight: KokoittaSize.minimumTapTarget,
-                          leading: Icon(_prefectureStateIcon(state)),
-                          title: Text(name),
-                          subtitle: Text(currentLabel),
-                          trailing: Text('$nextLabelへ'),
-                          onTap: () {
-                            Navigator.pop(sheetContext);
-                            unawaited(_updatePrefecture(name, state));
-                          },
-                        ),
-                      ),
+
+                    void updatePrefecture() {
+                      Navigator.pop(sheetContext);
+                      unawaited(_updatePrefecture(name, state));
+                    }
+
+                    return PrefectureStateListTile(
+                      name: name,
+                      currentLabel: currentLabel,
+                      nextLabel: nextLabel,
+                      icon: _prefectureStateIcon(state),
+                      onTap: updatePrefecture,
                     );
                   },
                 ),
