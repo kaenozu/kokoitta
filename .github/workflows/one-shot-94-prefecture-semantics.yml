@@ -1,0 +1,164 @@
+name: One-shot prefecture semantics patch
+
+on:
+  push:
+    branches:
+      - agent/85-home-map-redesign
+    paths:
+      - .github/workflows/one-shot-94-prefecture-semantics.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: agent/85-home-map-redesign
+          fetch-depth: 0
+      - name: Apply exact accessibility patch and remove this workflow
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          home = Path('lib/home_view.dart')
+          text = home.read_text()
+          old = '''                    return Semantics(
+                      button: true,
+                      label: '$name、$currentLabel。タップすると$nextLabelに変更',
+                      child: ExcludeSemantics(
+                        child: ListTile(
+                          minTileHeight: KokoittaSize.minimumTapTarget,
+                          leading: Icon(_prefectureStateIcon(state)),
+                          title: Text(name),
+                          subtitle: Text(currentLabel),
+                          trailing: Text('$nextLabelへ'),
+                          onTap: () {
+                            Navigator.pop(sheetContext);
+                            unawaited(_updatePrefecture(name, state));
+                          },
+                        ),
+                      ),
+                    );'''
+          new = '''                    void updatePrefecture() {
+                      Navigator.pop(sheetContext);
+                      unawaited(_updatePrefecture(name, state));
+                    }
+
+                    return PrefectureStateListTile(
+                      name: name,
+                      currentLabel: currentLabel,
+                      nextLabel: nextLabel,
+                      icon: _prefectureStateIcon(state),
+                      onTap: updatePrefecture,
+                    );'''
+          if text.count(old) != 1:
+              raise SystemExit(f'home_view exact match count={text.count(old)}')
+          home.write_text(text.replace(old, new))
+
+          dashboard = Path('lib/home_dashboard.dart')
+          text = dashboard.read_text()
+          marker = '\nclass _SummaryMetric extends StatelessWidget {'
+          component = r'''
+
+/// One actionable semantics node for a prefecture state transition.
+class PrefectureStateListTile extends StatelessWidget {
+  const PrefectureStateListTile({
+    required this.name,
+    required this.currentLabel,
+    required this.nextLabel,
+    required this.icon,
+    required this.onTap,
+    super.key,
+  });
+
+  final String name;
+  final String currentLabel;
+  final String nextLabel;
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  String get semanticLabel =>
+      '$name、$currentLabel。タップすると$nextLabelに変更';
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      enabled: onTap != null,
+      label: semanticLabel,
+      onTap: onTap,
+      child: ExcludeSemantics(
+        child: ListTile(
+          minTileHeight: KokoittaSize.minimumTapTarget,
+          leading: Icon(icon),
+          title: Text(name),
+          subtitle: Text(currentLabel),
+          trailing: Text('$nextLabelへ'),
+          onTap: onTap,
+        ),
+      ),
+    );
+  }
+}
+'''
+          if text.count(marker) != 1:
+              raise SystemExit(f'home_dashboard marker count={text.count(marker)}')
+          dashboard.write_text(text.replace(marker, component + marker))
+
+          test = Path('test/home_dashboard_test.dart')
+          text = test.read_text()
+          closing = '\n}\n'
+          case = r'''
+
+  testWidgets('prefecture list tile exposes and executes one tap action', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    var taps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildKokoittaTheme(Brightness.light),
+        home: Scaffold(
+          body: PrefectureStateListTile(
+            name: '東京都',
+            currentLabel: '未訪問',
+            nextLabel: '訪問済み',
+            icon: Icons.circle_outlined,
+            onTap: () => taps += 1,
+          ),
+        ),
+      ),
+    );
+
+    final tile = find.bySemanticsLabel('東京都、未訪問。タップすると訪問済みに変更');
+    expect(tile, findsOneWidget);
+    expect(
+      tester.getSemantics(tile),
+      matchesSemantics(
+        label: '東京都、未訪問。タップすると訪問済みに変更',
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: true,
+        hasTapAction: true,
+      ),
+    );
+    await tester.tap(tile);
+    expect(taps, 1);
+    semantics.dispose();
+  });
+'''
+          if not text.endswith(closing):
+              raise SystemExit('home_dashboard_test closing marker missing')
+          test.write_text(text[:-len(closing)] + case + closing)
+          PY
+          git rm .github/workflows/one-shot-94-prefecture-semantics.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/home_view.dart lib/home_dashboard.dart test/home_dashboard_test.dart
+          git diff --check
+          git commit -m 'fix: preserve prefecture list accessibility actions'
+          git push origin HEAD:agent/85-home-map-redesign
