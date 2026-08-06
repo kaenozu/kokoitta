@@ -96,51 +96,54 @@ class TripDetailView extends StatelessWidget {
                   >= 420 => 3,
                   _ => 2,
                 };
-          return CustomScrollView(
-            slivers: <Widget>[
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(KokoittaSpacing.md),
-                  child: _TripHero(
-                    title: title,
-                    photos: photos,
-                    capturedAtLabel: capturedAtLabel,
-                    locationLabel: locationLabel,
-                    onAddPhotos: onAddPhotos,
-                    busyMessage: busyMessage,
-                  ),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.all(KokoittaSpacing.md),
+                child: _TripHero(
+                  title: title,
+                  photos: photos,
+                  capturedAtLabel: capturedAtLabel,
+                  locationLabel: locationLabel,
+                  onAddPhotos: onAddPhotos,
+                  busyMessage: busyMessage,
                 ),
               ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
-                  KokoittaSpacing.md,
-                  0,
-                  KokoittaSpacing.md,
-                  KokoittaSpacing.xl,
-                ),
-                sliver: photos.isEmpty
-                    ? const SliverToBoxAdapter(
+              Expanded(
+                child: photos.isEmpty
+                    ? const SingleChildScrollView(
+                        padding: EdgeInsets.fromLTRB(
+                          KokoittaSpacing.md,
+                          0,
+                          KokoittaSpacing.md,
+                          KokoittaSpacing.xl,
+                        ),
                         child: KokoittaStatePanel(
                           tone: KokoittaStateTone.neutral,
                           title: 'まだ写真がありません',
                           message: 'この旅行へ写真を追加すると、ここに思い出が並びます。',
                         ),
                       )
-                    : SliverGrid(
+                    : GridView.builder(
+                        padding: const EdgeInsets.fromLTRB(
+                          KokoittaSpacing.md,
+                          0,
+                          KokoittaSpacing.md,
+                          KokoittaSpacing.xl,
+                        ),
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: crossAxisCount,
                           crossAxisSpacing: KokoittaSpacing.xs,
                           mainAxisSpacing: KokoittaSpacing.xs,
                         ),
-                        delegate: SliverChildBuilderDelegate(
-                          (context, index) => _PhotoGridTile(
-                            photo: photos[index],
-                            index: index,
-                            total: photos.length,
-                            tripTitle: title,
-                            onTap: () => onPhotoTap(index),
-                          ),
-                          childCount: photos.length,
+                        itemCount: photos.length,
+                        itemBuilder: (context, index) => _PhotoGridTile(
+                          photo: photos[index],
+                          index: index,
+                          total: photos.length,
+                          tripTitle: title,
+                          onTap: () => onPhotoTap(index),
                         ),
                       ),
               ),
