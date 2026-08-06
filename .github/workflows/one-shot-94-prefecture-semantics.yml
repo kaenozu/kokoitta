@@ -1,3 +1,4 @@
+# Triggered only to apply an exact branch-local patch, then self-delete.
 name: One-shot prefecture semantics patch
 
 on:
