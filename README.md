@@ -8,6 +8,7 @@
 
 - **エージェント向け運用ルール**: [AGENTS.md](AGENTS.md)
 - **コントリビューションガイド**: [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Issue #90 human acceptance checklist**: [docs/issue-90-human-acceptance.md](docs/issue-90-human-acceptance.md)
 - **Issue 作成**: [Issue テンプレート](.github/ISSUE_TEMPLATE/task_template.md)
 - **PR 作成**: [PR テンプレート](.github/pull_request_template.md)
 
