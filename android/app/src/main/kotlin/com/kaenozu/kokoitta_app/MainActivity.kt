@@ -93,6 +93,14 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startSession(source: Intent, initialResult: MethodChannel.Result? = null) {
+        // 共有URIの無いintent（ランチャー起動・テキストのみの共有など）は
+        // セッションを開始しない。開始すると「0枚を取り込みました」という
+        // completed結果がFlutterに届き、起動のたびに誤表示されるため。
+        if (extractUris(source).isEmpty()) {
+            consumeIntent(source)
+            initialResult?.success(null)
+            return
+        }
         val requestId = nextRequestId(source)
         val generation = ownership.start(requestId)
         if (generation == null) {

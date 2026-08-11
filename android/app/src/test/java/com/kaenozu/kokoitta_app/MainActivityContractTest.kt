@@ -53,4 +53,38 @@ class MainActivityContractTest {
         assertNull(activity.resolveExtension("image/tiff", "photo.tiff"))
         assertNull(activity.resolveExtension("image/x-icon", "photo.ico"))
     }
+
+    @Test
+    fun productionActivityExtractUrisIsEmptyForLauncherIntent() {
+        // ランチャー起動やテキストのみ共有など、画像URIの無いintentは
+        // 共有セッションを開始しない（0枚completedの誤送信を防ぐ）ための
+        // ガード条件。ACTION_MAIN では空リストが返ること。
+        val launcher = Intent(Intent.ACTION_MAIN)
+        val activity = MainActivity()
+        assertTrue(activity.extractUris(launcher).isEmpty())
+    }
+
+    @Test
+    fun productionActivityExtractUrisReadsSingleStreamUri() {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            putExtra(Intent.EXTRA_STREAM, Uri.parse("content://photos/one"))
+        }
+        val activity = MainActivity()
+        assertEquals(listOf(Uri.parse("content://photos/one")), activity.extractUris(intent))
+    }
+
+    @Test
+    fun productionActivityExtractUrisReadsMultipleStreamUris() {
+        val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            putParcelableArrayListExtra(
+                Intent.EXTRA_STREAM,
+                arrayListOf(Uri.parse("content://photos/one"), Uri.parse("content://photos/two")),
+            )
+        }
+        val activity = MainActivity()
+        assertEquals(
+            listOf(Uri.parse("content://photos/one"), Uri.parse("content://photos/two")),
+            activity.extractUris(intent),
+        )
+    }
 }
