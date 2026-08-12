@@ -339,7 +339,7 @@ extension _HomeDataActions on _HomePageState {
       successes: successfulFiles,
       failures: failures,
     );
-    if (completed.phase == ImportPhase.completed) {
+    if (completed.phase == ImportPhase.completed && copiedCount > 0) {
       _showMessage('$copiedCount枚を共有から取り込みました');
     } else if (completed.phase == ImportPhase.partialFailure) {
       _showMessage('$copiedCount件を取り込みました（${failures.length}件失敗）');
