@@ -325,7 +325,7 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return PrefectureMapActions(
-      onTap: _isDisabled ? null : _updatePrefecture,
+      onTap: _isDisabled ? null : _showPrefectureStatePicker,
       child: _buildPage(context),
     );
   }
