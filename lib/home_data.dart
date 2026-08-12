@@ -1046,12 +1046,11 @@ extension _HomeDataActions on _HomePageState {
     }
   }
 
-  Future<void> _updatePrefecture(String name, String currentState) async {
-    final nextState = currentState == 'unvisited'
-        ? 'visited'
-        : currentState == 'visited'
-        ? 'transit'
-        : 'unvisited';
+  /// 都道府県の状態を [nextState] に直接設定する。
+  ///
+  /// 地図タップ・都道府県リストは BottomSheet での明示選択を経由して
+  /// このメソッドを呼ぶ（誤タップによる順送り変更を防ぐ）。
+  Future<void> _setPrefectureState(String name, String nextState) async {
     try {
       await _coordinator.runMutation(() async {
         await _commitData(updatePrefectureState(_data, name, nextState));

@@ -206,6 +206,61 @@ extension _HomeView on _HomePageState {
     );
   }
 
+  /// 都道府県の状態を BottomSheet で明示選択する。
+  ///
+  /// 地図タップ・都道府県リストのどちらからも呼ばれる。現在状態を表示し、
+  /// 訪問済み・計画中・未訪問の3択から選ぶ（現在状態の再選択は何もしない）。
+  Future<void> _showPrefectureStatePicker(
+    String name,
+    String currentState,
+  ) async {
+    final states = <(String, String, IconData)>[
+      ('visited', '訪問済み', Icons.check_circle_outline),
+      ('transit', '計画中・通過', Icons.route_outlined),
+      ('unvisited', '未訪問', Icons.circle_outlined),
+    ];
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                KokoittaSpacing.lg,
+                KokoittaSpacing.xs,
+                KokoittaSpacing.lg,
+                KokoittaSpacing.md,
+              ),
+              child: KokoittaSectionHeader(
+                title: '$nameの状態を選択',
+                supportingText: '現在: ${_prefectureStateLabel(currentState)}',
+              ),
+            ),
+            const Divider(height: 1),
+            for (final (state, label, icon) in states)
+              ListTile(
+                leading: Icon(icon),
+                title: Text(label),
+                trailing: state == currentState
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  if (state != currentState) {
+                    unawaited(_setPrefectureState(name, state));
+                  }
+                },
+              ),
+            const SizedBox(height: KokoittaSpacing.md),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showPrefectureList() {
     showModalBottomSheet<void>(
       context: context,
@@ -244,8 +299,7 @@ extension _HomeView on _HomePageState {
                     final nextLabel = _prefectureNextStateLabel(state);
 
                     void updatePrefecture() {
-                      Navigator.pop(sheetContext);
-                      unawaited(_updatePrefecture(name, state));
+                      _showPrefectureStatePicker(name, state);
                     }
 
                     return PrefectureStateListTile(

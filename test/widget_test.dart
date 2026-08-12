@@ -505,6 +505,11 @@ void main() {
     await tester.tap(hokkaidoTapTarget);
     await tester.pumpAndSettle();
 
+    // ピッカー（BottomSheet）が開き、訪問済みを明示選択する
+    expect(find.text('北海道の状態を選択'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ListTile, '訪問済み'));
+    await tester.pumpAndSettle();
+
     expect(find.bySemanticsLabel(RegExp('北海道、訪問済み')), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());

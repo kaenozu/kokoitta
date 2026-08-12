@@ -169,14 +169,9 @@ class _PrefectureTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final colors = _stateColors(scheme, state);
-    final nextState = switch (state) {
-      'visited' => '通過',
-      'transit' => '未訪問',
-      _ => '訪問済み',
-    };
     final semanticsLabel = onTap == null
         ? '${prefecture.name}、${_stateLabel(state)}'
-        : '${prefecture.name}、${_stateLabel(state)}。タップすると$nextStateに変更';
+        : '${prefecture.name}、${_stateLabel(state)}。タップすると状態を選択';
 
     return Semantics(
       key: ValueKey<String>(

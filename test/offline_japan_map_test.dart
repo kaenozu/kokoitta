@@ -53,6 +53,10 @@ void main() {
     expect(find.bySemanticsLabel(RegExp('北海道、訪問済み')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp('東京都、通過')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp('沖縄県、未訪問')), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(RegExp('北海道、訪問済み。タップすると状態を選択')),
+      findsOneWidget,
+    );
 
     for (final entry in const <String, String>{
       '01': '北海道',
