@@ -101,6 +101,8 @@ class HomeMapDashboard extends StatelessWidget {
     super.key,
     this.operation,
     this.addDisabledReason,
+    this.missingPhotoCount = 0,
+    this.onMissingPhotosTap,
   });
 
   final Map<String, String> prefectureStates;
@@ -115,6 +117,12 @@ class HomeMapDashboard extends StatelessWidget {
   final VoidCallback? onOpenSettings;
   final HomeDashboardOperation? operation;
   final String? addDisabledReason;
+
+  /// 保存データが参照しているが、ファイルが存在しない写真の枚数。
+  final int missingPhotoCount;
+
+  /// 欠損写真の確認・復旧 UI を開くコールバック。null ならバナーを出さない。
+  final VoidCallback? onMissingPhotosTap;
 
   bool get _isEmpty => photoCount == 0 && recentTrips.isEmpty;
 
@@ -139,6 +147,8 @@ class HomeMapDashboard extends StatelessWidget {
             KokoittaSpacing.xxl,
           ),
           children: <Widget>[
+            if (missingPhotoCount > 0 && onMissingPhotosTap != null)
+              _buildMissingPhotosBanner(context),
             Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(
@@ -166,6 +176,55 @@ class HomeMapDashboard extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildMissingPhotosBanner(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: KokoittaSpacing.md),
+      child: Material(
+        color: colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(KokoittaRadius.medium),
+        child: InkWell(
+          onTap: onMissingPhotosTap,
+          borderRadius: BorderRadius.circular(KokoittaRadius.medium),
+          child: Padding(
+            padding: const EdgeInsets.all(KokoittaSpacing.md),
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  Icons.image_not_supported_outlined,
+                  color: colorScheme.onErrorContainer,
+                ),
+                const SizedBox(width: KokoittaSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '写真が$missingPhotoCount枚見つかりませんでした',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: colorScheme.onErrorContainer,
+                        ),
+                      ),
+                      const SizedBox(height: KokoittaSpacing.xs),
+                      Text(
+                        '端末内から移動・削除された可能性があります。タップして確認・復旧',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onErrorContainer,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: colorScheme.onErrorContainer),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
