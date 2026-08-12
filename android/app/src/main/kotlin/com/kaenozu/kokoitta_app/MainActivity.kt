@@ -183,10 +183,7 @@ class MainActivity : FlutterActivity() {
     }
 
     internal fun extractUris(source: Intent): List<Uri> {
-        val uris = mutableListOf<Uri>()
-        source.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.let(uris::add)
-        source.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.let(uris::addAll)
-        return uris.distinct()
+        return ShareIntentContract.extractUris(source)
     }
 
     private suspend fun processSharedFiles(source: Intent, session: RequestSession) {

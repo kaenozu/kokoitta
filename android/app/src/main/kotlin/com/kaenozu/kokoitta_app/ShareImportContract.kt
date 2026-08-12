@@ -8,10 +8,18 @@ import java.security.MessageDigest
 
 /** Pure share-intent contract used by MainActivity and JVM tests. */
 internal object ShareIntentContract {
+    fun extractUris(intent: Intent): List<Uri> {
+        val stream = intent.extras?.get(Intent.EXTRA_STREAM) ?: return emptyList()
+        val uris = when (stream) {
+            is Uri -> listOf(stream)
+            is ArrayList<*> -> stream.filterIsInstance<Uri>()
+            else -> emptyList()
+        }
+        return uris.distinct()
+    }
+
     fun computeRequestId(intent: Intent): String {
-        val singleUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-        val multiUris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
-        val allUris = (listOfNotNull(singleUri) + (multiUris ?: emptyList())).distinct().sorted()
+        val allUris = extractUris(intent).sorted()
         if (allUris.isEmpty()) return "empty_${intent.action}"
         val joined = allUris.joinToString("|") { it.toString().lowercase() }
         val digest = MessageDigest.getInstance("MD5").digest(joined.toByteArray())

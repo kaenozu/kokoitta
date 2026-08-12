@@ -74,6 +74,16 @@ class MainActivityContractTest {
     }
 
     @Test
+    fun shareContractReadsSingleStreamUriWithoutCastingItToArrayList() {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            putExtra(Intent.EXTRA_STREAM, Uri.parse("content://photos/one"))
+        }
+
+        assertEquals(listOf(Uri.parse("content://photos/one")), ShareIntentContract.extractUris(intent))
+        assertTrue(ShareIntentContract.computeRequestId(intent).isNotEmpty())
+    }
+
+    @Test
     fun productionActivityExtractUrisReadsMultipleStreamUris() {
         val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
             putParcelableArrayListExtra(
