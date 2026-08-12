@@ -90,12 +90,135 @@ class TripStore {
     final canonical = _canonicalize(data);
     final encoded = jsonEncode(_encode(canonical));
 
-    final pendingWritten = await preferences.setString(pendingKey, encoded);
+    // 欠損写真のレコードを新しい保存 JSON に保持する。
+    // load() は欠損レコードを読み飛ばすため、そのまま保存すると欠損レコード
+    // が消えて再割り当て不能になる（PR #108 の独立レビューで発見した
+    // エッジケース: 欠損中の通常操作で欠損レコードが意図せず消える）。
+    final preserved = await _preserveMissingPhotoRecords(preferences, encoded);
+
+    final pendingWritten = await preferences.setString(pendingKey, preserved);
     if (!pendingWritten) {
       throw FileSystemException('保存準備データを書き込めませんでした');
     }
 
-    await _writeCanonical(preferences, encoded);
+    await _writeCanonical(preferences, preserved);
+  }
+
+  /// 既存の保存 JSON に存在し、物理ファイルが存在しない写真レコード
+  /// （欠損レコード）を、新しい保存 JSON にマージして返す。
+  ///
+  /// 欠損レコードは load() で読み飛ばされるため、何もせず保存すると
+  /// 次回 load() で欠損として検出されず復旧不能になる。ここでは新しい
+  /// AppData に含まれない欠損レコードを元の所属（旅行または旅行未設定）に
+  /// 復元する。ファイルが実在するレコード（= ユーザーが削除した写真）は
+  /// 復元しない。
+  Future<String> _preserveMissingPhotoRecords(
+    SharedPreferences preferences,
+    String encoded,
+  ) async {
+    final stored = preferences.getString(dataKey);
+    if (stored == null || stored == encoded) return encoded;
+
+    final Object? storedDecoded;
+    final Object? newDecoded;
+    try {
+      storedDecoded = jsonDecode(stored);
+      newDecoded = jsonDecode(encoded);
+    } on FormatException {
+      return encoded;
+    }
+    if (storedDecoded is! Map<String, dynamic> ||
+        newDecoded is! Map<String, dynamic> ||
+        storedDecoded['schemaVersion'] != schemaVersion ||
+        newDecoded['schemaVersion'] != schemaVersion) {
+      return encoded;
+    }
+
+    // 新しい保存 JSON の写真 ID 集合と旅行 ID → 旅行マップ。
+    final newPhotoIds = <String>{};
+    final newTripsById = <String, Map<String, dynamic>>{};
+    final newTrips = newDecoded['trips'];
+    if (newTrips is List) {
+      for (final trip in newTrips) {
+        if (trip is! Map<String, dynamic>) continue;
+        final tripId = trip['id'];
+        if (tripId is String) {
+          newTripsById[tripId] = trip;
+        }
+        final photos = trip['photos'];
+        if (photos is List) {
+          for (final photo in photos) {
+            if (photo is Map<String, dynamic> && photo['id'] is String) {
+              newPhotoIds.add(photo['id'] as String);
+            }
+          }
+        }
+      }
+    }
+    final newUnassigned = newDecoded['unassignedPhotos'];
+    if (newUnassigned is List) {
+      for (final photo in newUnassigned) {
+        if (photo is Map<String, dynamic> && photo['id'] is String) {
+          newPhotoIds.add(photo['id'] as String);
+        }
+      }
+    }
+
+    // 既存保存 JSON から欠損レコードを収集する
+    // （ファイルが存在しない + 新しいデータに含まれない）。
+    final missingInTrips = <(String, Map<String, Object?>)>[];
+    final missingUnassigned = <Map<String, Object?>>[];
+
+    void collectMissing(Object? photos, {required String? tripId}) {
+      if (photos is! List) return;
+      for (final photo in photos) {
+        if (photo is! Map<String, dynamic>) continue;
+        final id = photo['id'];
+        final path = photo['path'];
+        if (id is! String || path is! String) continue;
+        if (newPhotoIds.contains(id)) continue;
+        if (File(path).existsSync()) continue; // 実在する写真は削除扱い。復元しない。
+        final record = Map<String, Object?>.from(photo);
+        if (tripId == null) {
+          missingUnassigned.add(record);
+        } else {
+          missingInTrips.add((tripId, record));
+        }
+      }
+    }
+
+    final storedTrips = storedDecoded['trips'];
+    if (storedTrips is List) {
+      for (final trip in storedTrips) {
+        if (trip is! Map<String, dynamic>) continue;
+        final tripId = trip['id'];
+        collectMissing(
+          trip['photos'],
+          tripId: tripId is String ? tripId : null,
+        );
+      }
+    }
+    collectMissing(storedDecoded['unassignedPhotos'], tripId: null);
+
+    if (missingInTrips.isEmpty && missingUnassigned.isEmpty) return encoded;
+
+    // 新しい保存 JSON に欠損レコードをマージする。
+    for (final (tripId, record) in missingInTrips) {
+      final trip = newTripsById[tripId];
+      if (trip == null) continue; // 旅行ごと削除された場合は復元しない。
+      final photos = trip['photos'];
+      if (photos is List) {
+        photos.add(record);
+      }
+    }
+    if (missingUnassigned.isNotEmpty) {
+      final unassigned = newDecoded['unassignedPhotos'];
+      if (unassigned is List) {
+        unassigned.addAll(missingUnassigned);
+      }
+    }
+
+    return jsonEncode(newDecoded);
   }
 
   Future<void> _writeCanonical(
