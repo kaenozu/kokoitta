@@ -32,6 +32,8 @@ void main() {
     bool addEnabled = true,
     Brightness brightness = Brightness.light,
     double textScale = 1,
+    int missingPhotoCount = 0,
+    VoidCallback? onMissingPhotosTap,
   }) {
     return MaterialApp(
       theme: buildKokoittaTheme(brightness),
@@ -53,6 +55,8 @@ void main() {
               onShowPrefectureList: () {},
               onRestoreBackup: () {},
               onOpenSettings: null,
+              missingPhotoCount: missingPhotoCount,
+              onMissingPhotosTap: onMissingPhotosTap,
             ),
           ),
         ),
@@ -246,5 +250,40 @@ void main() {
     expect(find.bySemanticsLabel('北海道、訪問済み。タップすると通過に変更'), findsOneWidget);
     expect(find.bySemanticsLabel('埼玉県、通過。タップすると未訪問に変更'), findsOneWidget);
     semantics.dispose();
+  });
+
+  testWidgets('missing photos banner shows count and opens recovery', (
+    tester,
+  ) async {
+    var tapped = false;
+    await setSurface(tester, size: const Size(412, 915));
+    await tester.pumpWidget(
+      buildDashboard(
+        missingPhotoCount: 3,
+        onMissingPhotosTap: () => tapped = true,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('写真が3枚見つかりませんでした'), findsOneWidget);
+    expect(find.text('端末内から移動・削除された可能性があります。タップして確認・復旧'), findsOneWidget);
+
+    await tester.tap(find.text('写真が3枚見つかりませんでした'));
+    await tester.pump();
+    expect(tapped, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('missing photos banner is hidden when count is zero', (
+    tester,
+  ) async {
+    await setSurface(tester, size: const Size(412, 915));
+    await tester.pumpWidget(
+      buildDashboard(missingPhotoCount: 0, onMissingPhotosTap: () {}),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('見つかりませんでした'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 }

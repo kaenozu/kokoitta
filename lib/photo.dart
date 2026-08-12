@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 int _photoSequence = 0;
 
 /// 新しい写真へ一度だけ付与する、ファイルパスに依存しない永続IDを生成する。
@@ -67,4 +69,35 @@ class Photo {
 String? _originalNameOf(File file) {
   final segments = file.uri.pathSegments;
   return segments.isEmpty ? null : segments.last;
+}
+
+/// 保存データが参照しているが、ファイルが存在しない写真の情報。
+///
+/// 読み込み時は従来どおり読み飛ばす（実在写真を奪わない）ため、欠損写真は
+/// [Photo] として AppData に含まれない。この欠損情報を別経路で保持し、
+/// UI がユーザーへ通知・復旧手段を提示するために使う。
+@immutable
+class MissingPhoto {
+  const MissingPhoto({
+    required this.id,
+    required this.path,
+    required this.tripId,
+    required this.tripTitle,
+  });
+
+  /// 保存データ内の写真ID。
+  ///
+  /// v3 レコードは保存済み ID。v2 形式（パス文字列のリスト）には ID が無いため、
+  /// [TripStore.legacyPhotoId] と同じ規則（正規化パスのSHA-256先頭32桁）で
+  /// 生成したIDを使う。旅行未設定・救済写真は空文字。
+  final String id;
+
+  /// 保存データが参照していた（存在しない）ファイルパス。
+  final String path;
+
+  /// 所属旅行のID。旅行未設定・無効タイトル旅行からの救済写真は空文字。
+  final String tripId;
+
+  /// 所属旅行のタイトル。旅行未設定・救済写真は空文字。
+  final String tripTitle;
 }

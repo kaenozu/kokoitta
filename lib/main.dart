@@ -113,6 +113,7 @@ class _HomePageState extends State<HomePage> {
   PendingDeletionManager? _pendingDeletion;
   late final Future<void> _initialization;
   AppData _data = AppData.empty();
+  List<MissingPhoto> _missingPhotos = const <MissingPhoto>[];
   bool _isLoading = true;
   String? _loadError;
   int _tab = 0;
@@ -155,7 +156,10 @@ class _HomePageState extends State<HomePage> {
     try {
       final loaded = await _store.load();
       if (!mounted) return;
-      _updateState(() => _data = loaded);
+      _updateState(() {
+        _data = loaded;
+        _missingPhotos = _store.missingPhotos;
+      });
       final recoveryReady = await _initializePendingDeletion();
       if (!mounted) return;
       _updateState(() => _isLoading = false);

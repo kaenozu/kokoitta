@@ -29,16 +29,27 @@ class TripStore {
 
   final PreferencesFactory _preferencesFactory;
 
+  /// 最後の [load] で検出した、保存データが参照するがファイルが存在しない写真。
+  ///
+  /// 読み込み時は従来どおり欠損写真を読み飛ばす（実在写真を奪わない）ため、
+  /// 欠損情報は AppData に含まれない。UI への通知・復旧はこの別経路を使う。
+  List<MissingPhoto> missingPhotos = const <MissingPhoto>[];
+
   Future<AppData> load() async {
+    missingPhotos = const <MissingPhoto>[];
     final preferences = await _preferencesFactory();
 
     final pending = preferences.getString(pendingKey);
     if (pending != null) {
       try {
         final recovered = _decode(pending);
-        final canonical = _canonicalize(recovered);
-        final encoded = jsonEncode(_encode(canonical));
-        await _writeCanonical(preferences, encoded);
+        // 欠損写真がある間は正規化保存をスキップする。_decode は欠損を読み飛ばす
+        // ため、そのまま _encode すると欠損レコードが消えて再割り当て不能になる。
+        if (missingPhotos.isEmpty) {
+          final canonical = _canonicalize(recovered);
+          final encoded = jsonEncode(_encode(canonical));
+          await _writeCanonical(preferences, encoded);
+        }
         return recovered;
       } on FormatException {
         await preferences.remove(pendingKey);
@@ -48,12 +59,18 @@ class TripStore {
     final stored = preferences.getString(dataKey);
     if (stored != null) {
       final recovered = _decode(stored);
-      final canonical = _canonicalize(recovered);
-      final canonicalEncoded = jsonEncode(_encode(canonical));
-      if (canonicalEncoded != stored) {
-        final written = await preferences.setString(dataKey, canonicalEncoded);
-        if (!written) {
-          throw FileSystemException('保存データを書き込めませんでした');
+      // 欠損写真がある間は正規化保存をスキップする（欠損レコード保持のため）。
+      if (missingPhotos.isEmpty) {
+        final canonical = _canonicalize(recovered);
+        final canonicalEncoded = jsonEncode(_encode(canonical));
+        if (canonicalEncoded != stored) {
+          final written = await preferences.setString(
+            dataKey,
+            canonicalEncoded,
+          );
+          if (!written) {
+            throw FileSystemException('保存データを書き込めませんでした');
+          }
         }
       }
       return recovered;
@@ -207,7 +224,12 @@ class TripStore {
         Trip(
           id: id,
           title: normalizedTitle,
-          photos: _readLegacyFiles(record['photos'], claimedPaths),
+          photos: _readLegacyFiles(
+            record['photos'],
+            claimedPaths,
+            tripId: id,
+            tripTitle: normalizedTitle,
+          ),
         ),
       );
     }
@@ -266,7 +288,13 @@ class TripStore {
         Trip(
           id: id,
           title: normalizedTitle,
-          photos: _readPhotos(record['photos'], claimedPaths, claimedIds),
+          photos: _readPhotos(
+            record['photos'],
+            claimedPaths,
+            claimedIds,
+            tripId: id,
+            tripTitle: normalizedTitle,
+          ),
         ),
       );
     }
@@ -348,7 +376,14 @@ class TripStore {
 
   /// v2形式の写真（パス文字列）を読む。欠損ファイルは従来どおり無視する。
   /// 欠損ファイルはID・パスをclaimしないため、後続する実在写真を奪わない。
-  List<Photo> _readLegacyFiles(Object? value, Set<String> claimedPaths) {
+  /// 無視した欠損写真は [missingPhotos] へ記録する（[tripId]・[tripTitle] は
+  /// 所属旅行の情報。旅行未設定・救済写真は空文字）。
+  List<Photo> _readLegacyFiles(
+    Object? value,
+    Set<String> claimedPaths, {
+    String tripId = '',
+    String tripTitle = '',
+  }) {
     if (value == null) return const <Photo>[];
     if (value is! List) {
       throw const FormatException('写真データが壊れています');
@@ -362,7 +397,18 @@ class TripStore {
       final normalizedPath = path.replaceAll('\\', '/');
       if (claimedPaths.contains(normalizedPath)) continue;
       final file = File(path);
-      if (!file.existsSync()) continue;
+      if (!file.existsSync()) {
+        missingPhotos = <MissingPhoto>[
+          ...missingPhotos,
+          MissingPhoto(
+            id: legacyPhotoId(path),
+            path: path,
+            tripId: tripId,
+            tripTitle: tripTitle,
+          ),
+        ];
+        continue;
+      }
       claimedPaths.add(normalizedPath);
       photos.add(Photo(id: legacyPhotoId(path), file: file));
     }
@@ -372,12 +418,14 @@ class TripStore {
   /// v3形式の写真レコードを読む。パス・IDの重複は読み込み時に最初の1件へ
   /// 集約し、欠損ファイルは無視する。欠損ファイルはID・パスをclaimしないため、
   /// 後続する実在写真（同一ID・別パス）を奪わない。metadataは壊れていても
-  /// nullへ正規化する。
+  /// nullへ正規化する。無視した欠損写真は [missingPhotos] へ記録する。
   List<Photo> _readPhotos(
     Object? value,
     Set<String> claimedPaths,
-    Set<String> claimedIds,
-  ) {
+    Set<String> claimedIds, {
+    String tripId = '',
+    String tripTitle = '',
+  }) {
     if (value == null) return const <Photo>[];
     if (value is! List) {
       throw const FormatException('写真データが壊れています');
@@ -403,7 +451,18 @@ class TripStore {
         continue;
       }
       final file = File(path);
-      if (!file.existsSync()) continue;
+      if (!file.existsSync()) {
+        missingPhotos = <MissingPhoto>[
+          ...missingPhotos,
+          MissingPhoto(
+            id: id,
+            path: path,
+            tripId: tripId,
+            tripTitle: tripTitle,
+          ),
+        ];
+        continue;
+      }
       claimedPaths.add(normalizedPath);
       claimedIds.add(id);
       photos.add(
@@ -478,11 +537,17 @@ class TripStore {
     final trips = <Trip>[];
     final claimedPaths = <String>{};
     for (final record in validRecords) {
+      final tripId = createEntityId('trip');
       trips.add(
         Trip(
-          id: createEntityId('trip'),
+          id: tripId,
           title: record.title,
-          photos: _readLegacyFiles(record.photos, claimedPaths),
+          photos: _readLegacyFiles(
+            record.photos,
+            claimedPaths,
+            tripId: tripId,
+            tripTitle: record.title,
+          ),
         ),
       );
     }
@@ -589,5 +654,99 @@ class TripStore {
       photos.add(Photo(id: legacyPhotoId(path), file: file));
     }
     return photos;
+  }
+
+  /// 欠損写真のレコードを保存データから明示的に削除する。
+  ///
+  /// [targets] に含まれる写真IDを持つレコードを、所属旅行（または旅行未設定）
+  /// の photos から取り除いて再保存する。IDが一致しないレコードは変更しない。
+  /// 削除後は再読み込みした [AppData] を返す。
+  Future<AppData> discardMissingPhotos(Iterable<MissingPhoto> targets) async {
+    final targetIds = targets.map((missing) => missing.id).toSet();
+    return _rewritePhotos(
+      (records) =>
+          records.where((record) => !targetIds.contains(record['id'])).toList(),
+    );
+  }
+
+  /// 欠損写真のレコードを新しいファイルへ再割り当てする。
+  ///
+  /// ID・metadataは維持し、path だけを [newFile] のパスへ置き換えて再保存する。
+  /// 再割り当て後は再読み込みした [AppData] を返す。新しいパスのファイルが
+  /// 実在しない場合は、次の [load] で再び欠損として検出される。
+  Future<AppData> reassignMissingPhoto(
+    MissingPhoto target,
+    File newFile,
+  ) async {
+    return _rewritePhotos(
+      (records) => [
+        for (final record in records)
+          if (record['id'] == target.id)
+            <String, Object?>{...record, 'path': newFile.path}
+          else
+            record,
+      ],
+    );
+  }
+
+  /// 保存データ（v3）の全写真レコードを [transform] で書き換えて再保存し、
+  /// 再読み込みした [AppData] を返す。
+  ///
+  /// v2形式が保存されている場合（未マイグレーション）は書き換え対象の
+  /// レコード構造が異なるため、何もせず再読み込みだけを行う。
+  Future<AppData> _rewritePhotos(
+    List<Map<String, Object?>> Function(List<Map<String, Object?>>) transform,
+  ) async {
+    final preferences = await _preferencesFactory();
+    final raw = preferences.getString(dataKey);
+    if (raw == null) {
+      return load();
+    }
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } on FormatException {
+      rethrow;
+    } catch (error) {
+      throw FormatException('保存データを読み取れません: $error');
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('保存データの形式が正しくありません');
+    }
+    if (decoded['schemaVersion'] != schemaVersion) {
+      // v2等の旧形式はレコード構造が異なるため書き換えず、再読み込みのみ。
+      return load();
+    }
+
+    List<Object?> rewriteList(Object? value) {
+      if (value is! List) return const <Object?>[];
+      return transform(
+        value
+            .whereType<Map>()
+            .map((entry) => Map<String, Object?>.from(entry))
+            .toList(),
+      );
+    }
+
+    final tripsValue = decoded['trips'];
+    if (tripsValue is! List) {
+      throw const FormatException('旅行データがありません');
+    }
+    for (final trip in tripsValue) {
+      if (trip is! Map) continue;
+      trip['photos'] = rewriteList(trip['photos']);
+    }
+    decoded['unassignedPhotos'] = rewriteList(decoded['unassignedPhotos']);
+
+    // _decode → _encode を経由すると欠損写真（読み飛ばし対象）のレコードまで
+    // 消えるため、置き換え後の JSON をそのまま保存する。既存レコードの
+    // 構造は変わらない（path/id のみ変更・削除）ため canonical 性は保たれる。
+    final encoded = jsonEncode(decoded);
+    final written = await preferences.setString(dataKey, encoded);
+    if (!written) {
+      throw FileSystemException('保存データを書き込めませんでした');
+    }
+    await preferences.remove(pendingKey);
+    return load();
   }
 }

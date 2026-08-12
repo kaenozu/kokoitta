@@ -665,4 +665,202 @@ void main() {
       isNot(contains('未知県')),
     );
   });
+
+  test('v3で欠損ファイルの写真がmissingPhotosに記録される', () async {
+    final missing = File('${temporaryDirectory.path}/missing.jpg');
+    final existing = await createPhotoFile('present.jpg');
+    final raw = jsonEncode(<String, Object>{
+      'schemaVersion': TripStore.schemaVersion,
+      'trips': <Object>[
+        <String, Object>{
+          'id': 'trip-1',
+          'title': '欠損写真',
+          'photos': <Object>[
+            <String, Object>{'id': 'photo-missing', 'path': missing.path},
+            <String, Object>{'id': 'photo-existing', 'path': existing.path},
+          ],
+        },
+      ],
+      'unassignedPhotos': const <Object>[],
+      'prefectureStates': const <String, String>{},
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.dataKey: raw,
+    });
+    final store = TripStore();
+
+    final loaded = await store.load();
+
+    expect(loaded.trips.single.photos, hasLength(1));
+    expect(store.missingPhotos, hasLength(1));
+    expect(store.missingPhotos.single.id, 'photo-missing');
+    expect(store.missingPhotos.single.path, missing.path);
+    expect(store.missingPhotos.single.tripId, 'trip-1');
+    expect(store.missingPhotos.single.tripTitle, '欠損写真');
+  });
+
+  test('v2で欠損ファイルの写真もmissingPhotosに記録される', () async {
+    final missing = File('${temporaryDirectory.path}/missing.jpg');
+    final raw = jsonEncode(<String, Object>{
+      'schemaVersion': TripStore.legacySchemaVersion,
+      'trips': <Object>[
+        <String, Object>{
+          'id': 'trip-1',
+          'title': '欠損写真',
+          'photos': <String>[missing.path],
+        },
+      ],
+      'unassignedPhotos': const <String>[],
+      'prefectureStates': const <String, String>{},
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.dataKey: raw,
+    });
+    final store = TripStore();
+
+    final loaded = await store.load();
+
+    expect(loaded.trips.single.photos, isEmpty);
+    expect(store.missingPhotos, hasLength(1));
+    expect(store.missingPhotos.single.path, missing.path);
+    expect(
+      store.missingPhotos.single.id,
+      TripStore.legacyPhotoId(missing.path),
+    );
+    expect(store.missingPhotos.single.tripTitle, '欠損写真');
+  });
+
+  test('旅行未設定の欠損写真もmissingPhotosに記録される', () async {
+    final missing = File('${temporaryDirectory.path}/missing.jpg');
+    final raw = jsonEncode(<String, Object>{
+      'schemaVersion': TripStore.schemaVersion,
+      'trips': const <Object>[],
+      'unassignedPhotos': <Object>[
+        <String, Object>{'id': 'photo-missing', 'path': missing.path},
+      ],
+      'prefectureStates': const <String, String>{},
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.dataKey: raw,
+    });
+    final store = TripStore();
+
+    final loaded = await store.load();
+
+    expect(loaded.unassignedPhotos, isEmpty);
+    expect(store.missingPhotos, hasLength(1));
+    expect(store.missingPhotos.single.id, 'photo-missing');
+    expect(store.missingPhotos.single.tripId, isEmpty);
+    expect(store.missingPhotos.single.tripTitle, isEmpty);
+  });
+
+  test('discardMissingPhotosで欠損レコードが削除される', () async {
+    final missing = File('${temporaryDirectory.path}/missing.jpg');
+    final existing = await createPhotoFile('present.jpg');
+    final raw = jsonEncode(<String, Object>{
+      'schemaVersion': TripStore.schemaVersion,
+      'trips': <Object>[
+        <String, Object>{
+          'id': 'trip-1',
+          'title': '欠損写真',
+          'photos': <Object>[
+            <String, Object>{'id': 'photo-missing', 'path': missing.path},
+            <String, Object>{'id': 'photo-existing', 'path': existing.path},
+          ],
+        },
+      ],
+      'unassignedPhotos': const <Object>[],
+      'prefectureStates': const <String, String>{},
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.dataKey: raw,
+    });
+    final store = TripStore();
+    await store.load();
+    expect(store.missingPhotos, hasLength(1));
+
+    final data = await store.discardMissingPhotos(store.missingPhotos);
+
+    expect(store.missingPhotos, isEmpty);
+    expect(data.trips.single.photos, hasLength(1));
+    expect(data.trips.single.photos.single.id, 'photo-existing');
+  });
+
+  test('reassignMissingPhotoでpathが更新され再読込で復元される', () async {
+    final missing = File('${temporaryDirectory.path}/missing.jpg');
+    final replacement = await createPhotoFile('replacement.jpg');
+    final raw = jsonEncode(<String, Object>{
+      'schemaVersion': TripStore.schemaVersion,
+      'trips': <Object>[
+        <String, Object>{
+          'id': 'trip-1',
+          'title': '欠損写真',
+          'photos': <Object>[
+            <String, Object>{'id': 'photo-missing', 'path': missing.path},
+          ],
+        },
+      ],
+      'unassignedPhotos': const <Object>[],
+      'prefectureStates': const <String, String>{},
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.dataKey: raw,
+    });
+    final store = TripStore();
+    await store.load();
+    expect(store.missingPhotos, hasLength(1));
+
+    final data = await store.reassignMissingPhoto(
+      store.missingPhotos.single,
+      replacement,
+    );
+
+    expect(store.missingPhotos, isEmpty);
+    expect(data.trips.single.photos, hasLength(1));
+    expect(data.trips.single.photos.single.id, 'photo-missing');
+    expect(data.trips.single.photos.single.file.path, replacement.path);
+  });
+
+  test('再割り当て後に保存データのpathが置き換わっている', () async {
+    final missing = File('${temporaryDirectory.path}/missing.jpg');
+    final replacement = await createPhotoFile('replacement.jpg');
+    final raw = jsonEncode(<String, Object>{
+      'schemaVersion': TripStore.schemaVersion,
+      'trips': <Object>[
+        <String, Object>{
+          'id': 'trip-1',
+          'title': '欠損写真',
+          'photos': <Object>[
+            <String, Object>{
+              'id': 'photo-missing',
+              'path': missing.path,
+              'capturedAt': '2026-08-01T12:00:00.000Z',
+            },
+          ],
+        },
+      ],
+      'unassignedPhotos': const <Object>[],
+      'prefectureStates': const <String, String>{},
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      TripStore.dataKey: raw,
+    });
+    final store = TripStore();
+    await store.load();
+
+    await store.reassignMissingPhoto(store.missingPhotos.single, replacement);
+
+    final preferences = await SharedPreferences.getInstance();
+    final stored =
+        jsonDecode(preferences.getString(TripStore.dataKey)!)
+            as Map<String, dynamic>;
+    final storedPhoto =
+        ((stored['trips'] as List).single as Map<String, dynamic>)['photos']
+            as List;
+    final record = (storedPhoto.single as Map<String, dynamic>);
+    expect(record['path'], replacement.path);
+    expect(record['id'], 'photo-missing');
+    // metadata（capturedAt）は再割り当て後も維持される。
+    expect(record['capturedAt'], '2026-08-01T12:00:00.000Z');
+  });
 }

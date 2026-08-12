@@ -199,6 +199,10 @@ extension _HomeView on _HomePageState {
       onShowPrefectureList: _isDisabled ? null : _showPrefectureList,
       onRestoreBackup: _isDisabled ? null : _showBackupMenu,
       onOpenSettings: null,
+      missingPhotoCount: _missingPhotos.length,
+      onMissingPhotosTap: _missingPhotos.isEmpty
+          ? null
+          : _showMissingPhotosRecovery,
     );
   }
 
@@ -478,6 +482,60 @@ extension _PhotoViewerActions on _HomePageState {
           photos: photos,
           initialIndex: initialIndex,
           onShare: (photo) => _shareFiles(<Photo>[photo], title ?? '写真'),
+        ),
+      ),
+    );
+  }
+}
+
+/// 欠損写真1枚の表示と復旧アクション（選び直す・破棄）。
+class _MissingPhotoTile extends StatelessWidget {
+  const _MissingPhotoTile({
+    required this.missing,
+    required this.onReassign,
+    required this.onDiscard,
+  });
+
+  final MissingPhoto missing;
+  final VoidCallback onReassign;
+  final VoidCallback onDiscard;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(bottom: KokoittaSpacing.xs),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: KokoittaSpacing.sm,
+          vertical: KokoittaSpacing.sm,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              missing.path,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: KokoittaSpacing.xs),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: <Widget>[
+                TextButton.icon(
+                  onPressed: onReassign,
+                  icon: const Icon(Icons.image_outlined, size: 18),
+                  label: const Text('選び直す'),
+                ),
+                TextButton.icon(
+                  onPressed: onDiscard,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('破棄'),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

@@ -643,6 +643,203 @@ extension _HomeDataActions on _HomePageState {
     }
   }
 
+  /// 欠損写真の確認・復旧ボトムシートを開く。
+  ///
+  /// 欠損写真を所属旅行ごとにまとめて表示し、1枚ごとに「選び直す」（再割り当て）
+  /// と「破棄」（レコード削除）を提供する。「すべて破棄」で全件一括削除もできる。
+  void _showMissingPhotosRecovery() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final missing = _missingPhotos;
+          if (missing.isEmpty) {
+            return const SafeArea(child: SizedBox.shrink());
+          }
+          final grouped = <String, List<MissingPhoto>>{};
+          for (final entry in missing) {
+            grouped
+                .putIfAbsent(entry.tripTitle, () => <MissingPhoto>[])
+                .add(entry);
+          }
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                KokoittaSpacing.md,
+                KokoittaSpacing.xs,
+                KokoittaSpacing.md,
+                KokoittaSpacing.lg,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Text(
+                    '見つからない写真（${missing.length}枚）',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: KokoittaSpacing.xs),
+                  Text(
+                    '端末内から移動・削除された可能性があります。同じ写真を選び直すか、'
+                    '記録を破棄できます。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: KokoittaSpacing.md),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: <Widget>[
+                        for (final entry in grouped.entries) ...<Widget>[
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              top: KokoittaSpacing.sm,
+                              bottom: KokoittaSpacing.xs,
+                            ),
+                            child: Text(
+                              entry.key.isEmpty ? '旅行に未設定の写真' : entry.key,
+                              style: Theme.of(context).textTheme.labelLarge,
+                            ),
+                          ),
+                          for (final item in entry.value)
+                            _MissingPhotoTile(
+                              missing: item,
+                              onReassign: () async {
+                                await _reassignMissingPhoto(item);
+                                if (mounted) {
+                                  setSheetState(() {});
+                                }
+                              },
+                              onDiscard: () async {
+                                await _discardMissingPhoto(item);
+                                if (mounted) {
+                                  setSheetState(() {});
+                                }
+                              },
+                            ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: KokoittaSpacing.md),
+                  if (missing.length > 1)
+                    KokoittaActionButton(
+                      label: 'すべて破棄（${missing.length}枚）',
+                      icon: Icons.delete_outline,
+                      emphasis: KokoittaActionEmphasis.secondary,
+                      onPressed: () async {
+                        await _discardMissingPhotos(missing);
+                        if (mounted) {
+                          setSheetState(() {});
+                        }
+                      },
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// 1枚の欠損写真をギャラリーから選び直して再割り当てする。
+  Future<void> _reassignMissingPhoto(MissingPhoto missing) async {
+    final picked = await _picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 2048,
+    );
+    if (picked == null || !mounted) return;
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final photosDirectory = Directory('${directory.path}/photos');
+      await photosDirectory.create(recursive: true);
+      final source = File(picked.path);
+      if (!await source.exists()) {
+        throw const FileSystemException('選択した写真を読み込めませんでした');
+      }
+      final destination = File(
+        '${photosDirectory.path}/${createEntityId('reassign')}${_safeExtension(picked.name)}',
+      );
+      final copied = await source.copy(destination.path);
+      await _coordinator.runMutation(() async {
+        final data = await _store.reassignMissingPhoto(missing, copied);
+        _updateState(() {
+          _data = data;
+          _missingPhotos = _store.missingPhotos;
+        });
+      });
+      if (mounted) _showMessage('写真を再割り当てしました');
+    } catch (error) {
+      _showError('写真の再割り当て', error);
+    }
+  }
+
+  /// 1枚の欠損写真のレコードを保存データから破棄する。
+  Future<void> _discardMissingPhoto(MissingPhoto missing) async {
+    final confirmed = await _confirmDiscard(missing);
+    if (confirmed != true || !mounted) return;
+    try {
+      await _coordinator.runMutation(() async {
+        final data = await _store.discardMissingPhotos(<MissingPhoto>[missing]);
+        _updateState(() {
+          _data = data;
+          _missingPhotos = _store.missingPhotos;
+        });
+      });
+      if (mounted) _showMessage('欠損写真の記録を破棄しました');
+    } catch (error) {
+      _showError('欠損写真の破棄', error);
+    }
+  }
+
+  /// 欠損写真のレコードをすべて破棄する。
+  Future<void> _discardMissingPhotos(List<MissingPhoto> missing) async {
+    final confirmed = await _confirmDiscard(
+      missing.first,
+      count: missing.length,
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _coordinator.runMutation(() async {
+        final data = await _store.discardMissingPhotos(missing);
+        _updateState(() {
+          _data = data;
+          _missingPhotos = _store.missingPhotos;
+        });
+      });
+      if (mounted) _showMessage('欠損写真の記録を破棄しました');
+    } catch (error) {
+      _showError('欠損写真の破棄', error);
+    }
+  }
+
+  Future<bool?> _confirmDiscard(MissingPhoto missing, {int? count}) {
+    final label = count != null ? '写真が$count枚見つかりません' : '写真が見つかりません';
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(label),
+        content: Text(
+          '破棄すると、この写真の記録（${missing.path}）が保存データから削除されます。'
+          '元の写真ファイルが端末にある場合は、先に「選び直す」で再登録できます。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('破棄'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<_CopiedImportResult> _copyPickedImages(
     List<XFile> selected, {
     required void Function(int processed, int succeeded, int failed) onProgress,
