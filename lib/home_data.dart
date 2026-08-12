@@ -752,6 +752,8 @@ extension _HomeDataActions on _HomePageState {
       maxWidth: 2048,
     );
     if (picked == null || !mounted) return;
+    // コピー済みだが保存に失敗した場合の孤児ファイル削除用。
+    File? copied;
     try {
       final directory = await getApplicationDocumentsDirectory();
       final photosDirectory = Directory('${directory.path}/photos');
@@ -763,9 +765,10 @@ extension _HomeDataActions on _HomePageState {
       final destination = File(
         '${photosDirectory.path}/${createEntityId('reassign')}${_safeExtension(picked.name)}',
       );
-      final copied = await source.copy(destination.path);
+      copied = await source.copy(destination.path);
+      final fileForStore = copied;
       await _coordinator.runMutation(() async {
-        final data = await _store.reassignMissingPhoto(missing, copied);
+        final data = await _store.reassignMissingPhoto(missing, fileForStore);
         _updateState(() {
           _data = data;
           _missingPhotos = _store.missingPhotos;
@@ -773,6 +776,15 @@ extension _HomeDataActions on _HomePageState {
       });
       if (mounted) _showMessage('写真を再割り当てしました');
     } catch (error) {
+      // 再割り当て保存に失敗した場合、コピー済みファイルはどのレコードにも
+      // 紐づかない孤児になるため削除する。削除自体の失敗は元のエラー報告を優先。
+      try {
+        if (copied != null && await copied.exists()) {
+          await copied.delete();
+        }
+      } catch (_) {
+        // 元のエラー（_showError）を優先する。
+      }
       _showError('写真の再割り当て', error);
     }
   }
