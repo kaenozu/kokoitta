@@ -255,8 +255,9 @@ extension _HomeDataActions on _HomePageState {
           );
         }
 
+        final nextWithGps = await applyGpsPrefectureStates(next, copied.photos);
         try {
-          await _commitData(next);
+          await _commitData(nextWithGps);
         } catch (_) {
           final deleteFailures = await _deleteFiles(copied.photos);
           copiedCount = 0;
@@ -578,9 +579,10 @@ extension _HomeDataActions on _HomePageState {
                 ),
               )
             : addPhotosToTrip(_data, tripId, copied.photos);
+        final nextWithGps = await applyGpsPrefectureStates(next, copied.photos);
 
         try {
-          await _commitData(next);
+          await _commitData(nextWithGps);
         } catch (_) {
           final deleteFailures = await _deleteFiles(copied.photos);
           if (_cancelledImportRequestIds.contains(requestId)) {

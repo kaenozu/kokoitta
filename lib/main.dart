@@ -19,6 +19,7 @@ import 'operation_coordinator.dart';
 import 'pending_deletion.dart';
 import 'pending_deletion_recovery.dart';
 import 'photo.dart';
+import 'photo_gps.dart';
 import 'photo_quota.dart';
 import 'photo_viewer.dart';
 import 'import_progress.dart';
