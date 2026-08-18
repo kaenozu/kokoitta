@@ -1,7 +1,7 @@
 name: kokoitta_app
 description: "写真からつくるおでかけ地図"
 publish_to: 'none'
-version: 1.0.3+4
+version: 1.0.4+9
 
 environment:
   sdk: ^3.12.0
