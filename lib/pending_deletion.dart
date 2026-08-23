@@ -300,11 +300,15 @@ class PendingDeletionManager {
     final moved = <PendingDeletionItem>[];
     var appDataCommitted = false;
     try {
+      // staged manifestを物理移動より先に保存する。移動はoperationId由来の
+      // trashパスへ行われるため、移動後にmanifest保存へ失敗・中断すると
+      // 回復機構がtrashを再導出できず写真が孤立する。manifest先行なら、
+      // 移動済み/未移動の混在もrecoveryがoriginal/trashの存在判定で解決する。
+      await _save(<PendingDeletionOperation>[...operations, operation]);
       for (final item in items) {
         await moveFile(item.originalPath, item.trashPath);
         moved.add(item);
       }
-      await _save(<PendingDeletionOperation>[...operations, operation]);
       final next = data.copyWith(
         trips: <Trip>[...data.trips]..removeAt(tripIndex),
       );

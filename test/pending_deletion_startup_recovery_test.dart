@@ -67,6 +67,29 @@ void main() {
     expect(await fixture.trashFiles.single.exists(), isFalse);
   });
 
+  test('移動済みと未移動が混在した中断でも全写真を復元してmanifestを除去する', () async {
+    // manifest保存後に1写真目だけ移動した時点で中断したkill windowを再現する。
+    // fixture既定ではoriginal実体は無くtrashのみ存在する(=移動済み相当)。
+    // 2写真目は未移動相当としてoriginal実体を用意しtrash実体を消す。
+    final fixture = await _RecoveryFixture.create(photoCount: 2);
+    addTearDown(fixture.dispose);
+    await fixture.saveManifest();
+    await fixture.originals[1].writeAsBytes(<int>[2]);
+    await fixture.trashFiles[1].delete();
+
+    final remaining = await recoverPendingDeletions(
+      manager: fixture.manager,
+      data: fixture.dataWithTrip,
+    );
+
+    expect(remaining, isEmpty);
+    expect(await fixture.manager.loadOperations(), isEmpty);
+    expect(await fixture.originals[0].readAsBytes(), <int>[1]);
+    expect(await fixture.originals[1].readAsBytes(), <int>[2]);
+    expect(await fixture.trashFiles[0].exists(), isFalse);
+    expect(await fixture.trashFiles[1].exists(), isFalse);
+  });
+
   test('originalとtrashが両方ある曖昧状態は変更せずstaged manifestを保持する', () async {
     final fixture = await _RecoveryFixture.create(createOriginal: true);
     addTearDown(fixture.dispose);

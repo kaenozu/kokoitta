@@ -31,6 +31,22 @@ class FailingSaveManifestStore implements PendingDeletionManifestStore {
   }
 }
 
+class OrderingRecordingManifestStore implements PendingDeletionManifestStore {
+  OrderingRecordingManifestStore(this.events);
+
+  final List<String> events;
+  String? value;
+
+  @override
+  Future<String?> load() async => value;
+
+  @override
+  Future<void> save(String? encoded) async {
+    events.add('manifest-save');
+    value = encoded;
+  }
+}
+
 Photo photo(File file) => Photo(
   id: 'photo-1',
   file: file,
@@ -95,6 +111,27 @@ void main() {
     );
     expect(await original.exists(), isTrue);
     expect(await service.loadOperations(), isEmpty);
+  });
+
+  test('staged manifestはどの物理移動より先に保存される', () async {
+    final events = <String>[];
+    final service = PendingDeletionManager(
+      store: OrderingRecordingManifestStore(events),
+      trashRoot: '${root.path}/trash',
+      now: () => DateTime.utc(2026, 1, 2, 4),
+      moveFile: (from, to) async =>
+          throw const FileSystemException('stage failed'),
+    );
+
+    await expectLater(
+      service.deleteTrip(
+        data: current,
+        tripId: 'trip-1',
+        saveData: (_) async {},
+      ),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(events.first, 'manifest-save');
   });
 
   test('保存失敗は退避ファイルを元pathへ戻しmanifestを残さない', () async {
