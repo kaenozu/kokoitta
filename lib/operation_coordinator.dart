@@ -10,6 +10,14 @@ enum OperationStatus {
   failed,
 }
 
+/// 同一リソースに対する競合操作の拒否を表すエラー。
+///
+/// 呼び出し側が文言照合に頼らず型で再試行判断できるように、busy系の
+/// StateErrorをこの専用型で投げる。messageはデバッグ用途のみ。
+class OperationConflictError extends StateError {
+  OperationConflictError(super.message);
+}
+
 class OperationCoordinator {
   final _statusController = StreamController<OperationStatus>.broadcast();
   Future<void> _queue = Future<void>.value();
@@ -46,7 +54,7 @@ class OperationCoordinator {
   Future<T> runMutation<T>(Future<T> Function() action) {
     _ensureNotDisposed();
     if (_hasRestoreSession) {
-      throw StateError('Cannot mutate during restore session');
+      throw OperationConflictError('Cannot mutate during restore session');
     }
     _pendingMutationCount += 1;
     _notifyStatus();
@@ -63,10 +71,10 @@ class OperationCoordinator {
   Future<T> runBackup<T>(Future<T> Function() action) {
     _ensureNotDisposed();
     if (_hasBackupQueued || _status == OperationStatus.backup) {
-      throw StateError('Backup already in progress');
+      throw OperationConflictError('Backup already in progress');
     }
     if (_hasRestoreSession) {
-      throw StateError('Cannot backup during restore session');
+      throw OperationConflictError('Cannot backup during restore session');
     }
     _hasBackupQueued = true;
     _notifyStatus();
@@ -88,10 +96,10 @@ class OperationCoordinator {
   Future<T> runCleanup<T>(Future<T> Function() action) {
     _ensureNotDisposed();
     if (_hasCleanupQueued || _status == OperationStatus.cleanup) {
-      throw StateError('Cleanup already in progress');
+      throw OperationConflictError('Cleanup already in progress');
     }
     if (_hasRestoreSession) {
-      throw StateError('Cannot cleanup during restore session');
+      throw OperationConflictError('Cannot cleanup during restore session');
     }
     _hasCleanupQueued = true;
     _notifyStatus();
@@ -108,10 +116,12 @@ class OperationCoordinator {
   void beginRestorePrepare() {
     _ensureNotDisposed();
     if (isBusy) {
-      throw StateError('Cannot begin restore preparation while busy');
+      throw OperationConflictError(
+        'Cannot begin restore preparation while busy',
+      );
     }
     if (_hasRestoreSession) {
-      throw StateError('Restore session already in progress');
+      throw OperationConflictError('Restore session already in progress');
     }
     _hasRestoreSession = true;
     _updateStatus(OperationStatus.restorePrepare);
@@ -131,7 +141,7 @@ class OperationCoordinator {
       throw StateError('Must be in restoreConfirm state to commit');
     }
     if (_hasRestoreCommitQueued) {
-      throw StateError('Restore commit already queued');
+      throw OperationConflictError('Restore commit already queued');
     }
     _hasRestoreCommitQueued = true;
     _notifyStatus();

@@ -1,3 +1,5 @@
+import 'package:collection/collection.dart';
+
 import 'models.dart';
 import 'photo.dart';
 import 'validators.dart';
@@ -59,11 +61,4 @@ AppData updatePrefectureState(AppData data, String prefecture, String state) {
       prefecture: state,
     }),
   );
-}
-
-extension _FirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull {
-    final iterator = this.iterator;
-    return iterator.moveNext() ? iterator.current : null;
-  }
 }

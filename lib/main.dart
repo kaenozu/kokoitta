@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:collection/collection.dart';
 import 'image_decode.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -23,6 +24,7 @@ import 'photo_gps.dart';
 import 'photo_quota.dart';
 import 'photo_viewer.dart';
 import 'import_progress.dart';
+import 'safe_extension.dart';
 import 'storage_cleanup.dart';
 import 'trip_store.dart';
 import 'validators.dart';

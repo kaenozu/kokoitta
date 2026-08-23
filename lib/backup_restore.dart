@@ -166,14 +166,14 @@ extension _BackupRestoreOperations on BackupService {
         _validateArchivePhotoPath(archivePath);
         final entry = archive.findFile(archivePath);
         if (entry == null) {
-          throw FormatException('写真が見つかりません: $archivePath');
+          throw FormatException('バックアップに写真が見つかりません');
         }
         if (entry.size > maxSinglePhotoBytes) {
-          throw FormatException('写真1枚の容量が上限を超えています: $archivePath');
+          throw const FormatException('写真1枚の容量が上限を超えています');
         }
         final content = entry.readBytes();
         if (content == null) {
-          throw FormatException('写真を展開できません: $archivePath');
+          throw const FormatException('写真を展開できません');
         }
         extractedBytes += content.length;
         extractedPhotos += 1;
@@ -185,12 +185,12 @@ extension _BackupRestoreOperations on BackupService {
           final expected = checksums[archivePath];
           final actual = sha256.convert(content).toString();
           if (expected == null || expected != actual) {
-            throw FormatException('写真の整合性を確認できません: $archivePath');
+            throw const FormatException('写真の整合性を確認できません');
           }
         }
 
         final relativePath =
-            '$group/${index.toString().padLeft(3, '0')}${_safeExtension(archivePath)}';
+            '$group/${index.toString().padLeft(3, '0')}${safeFileExtension(archivePath)}';
         final destination = File('${stagingDirectory.path}/$relativePath');
         await destination.parent.create(recursive: true);
         await destination.writeAsBytes(content, flush: true);
@@ -538,14 +538,7 @@ void _validateArchivePhotoPath(String path) {
       path.startsWith('/') ||
       segments.contains('..') ||
       path.contains('\\')) {
-    throw FormatException('不正な写真パスです: $path');
+    // アーカイブ内パスは外部入力のため、UIへ露出するメッセージに含めない。
+    throw const FormatException('バックアップ内の写真パスが不正です');
   }
-}
-
-String _safeExtension(String path) {
-  final fileName = path.split(RegExp(r'[/\\]')).last;
-  final separator = fileName.lastIndexOf('.');
-  if (separator < 0) return '.jpg';
-  final extension = fileName.substring(separator).toLowerCase();
-  return RegExp(r'^\.[a-z0-9]{1,5}$').hasMatch(extension) ? extension : '.jpg';
 }
