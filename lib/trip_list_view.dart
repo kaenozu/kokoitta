@@ -66,12 +66,14 @@ class KokoittaTripListView extends StatelessWidget {
               primaryAction: KokoittaActionButton(
                 label: '写真を追加',
                 icon: Icons.add_a_photo_outlined,
+                disabledReason: disabledReason,
                 onPressed: onAddPhotos,
               ),
               secondaryAction: KokoittaActionButton(
                 label: 'バックアップから復元',
                 icon: Icons.restore_outlined,
                 emphasis: KokoittaActionEmphasis.secondary,
+                disabledReason: disabledReason,
                 onPressed: onRestoreBackup,
               ),
             ),

@@ -58,6 +58,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'disabled empty-state actions announce why they are unavailable',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: KokoittaTripListView(
+            items: const <TripListItem>[],
+            disabledReason: '写真の処理中は追加できません',
+            onAddPhotos: null,
+            onRestoreBackup: null,
+          ),
+        ),
+      );
+
+      expect(
+        tester.getSemantics(find.text('写真を追加')),
+        matchesSemantics(
+          label: '写真を追加',
+          hint: '写真の処理中は追加できません',
+          isButton: true,
+          hasEnabledState: true,
+          isEnabled: false,
+          hasTapAction: false,
+        ),
+      );
+      semantics.dispose();
+    },
+  );
+
   testWidgets('cards expose and execute one semantic navigation action', (
     tester,
   ) async {
