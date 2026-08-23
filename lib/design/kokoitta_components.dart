@@ -12,12 +12,14 @@ class KokoittaActionButton extends StatelessWidget {
     super.key,
     this.icon,
     this.emphasis = KokoittaActionEmphasis.primary,
+    this.disabledReason,
   });
 
   final String label;
   final VoidCallback? onPressed;
   final IconData? icon;
   final KokoittaActionEmphasis emphasis;
+  final String? disabledReason;
 
   Widget _content() {
     return Wrap(
@@ -35,7 +37,7 @@ class KokoittaActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return switch (emphasis) {
+    final button = switch (emphasis) {
       KokoittaActionEmphasis.primary => FilledButton(
         onPressed: onPressed,
         child: _content(),
@@ -53,6 +55,15 @@ class KokoittaActionButton extends StatelessWidget {
         child: _content(),
       ),
     };
+    if (onPressed != null || disabledReason == null) return button;
+    return Semantics(
+      container: true,
+      button: true,
+      enabled: false,
+      label: label,
+      hint: disabledReason,
+      child: ExcludeSemantics(child: button),
+    );
   }
 }
 

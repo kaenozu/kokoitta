@@ -277,4 +277,35 @@ void main() {
     expect(settingsTapCount, 1);
     semantics.dispose();
   });
+
+  testWidgets('disabled action exposes the reason to assistive technology', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: KokoittaActionButton(
+            label: '写真を追加',
+            disabledReason: '写真の処理中は追加できません',
+            onPressed: null,
+          ),
+        ),
+      ),
+    );
+
+    final action = tester.getSemantics(find.text('写真を追加'));
+    expect(
+      action,
+      matchesSemantics(
+        label: '写真を追加',
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: false,
+        hasTapAction: false,
+        hint: '写真の処理中は追加できません',
+      ),
+    );
+    semantics.dispose();
+  });
 }
