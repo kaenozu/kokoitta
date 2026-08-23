@@ -286,6 +286,10 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('com.kaenozu.kokoitta/share');
 
+  // FakeAsync環境ではIsolate.runが完了せずload()が停止するため、
+  // 存在判定のisolateオフロードをテストでは無効化する。
+  TripStore.resolveExistenceInIsolate = false;
+
   late Directory photoDirectory;
   late List<File> photoFiles;
 
