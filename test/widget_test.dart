@@ -309,13 +309,16 @@ void main() {
     }
   });
 
-  void seedAppData(List<Map<String, Object>> trips) {
+  void seedAppData(
+    List<Map<String, Object>> trips, {
+    Map<String, String> prefectureStates = const <String, String>{},
+  }) {
     SharedPreferences.setMockInitialValues(<String, Object>{
       TripStore.dataKey: jsonEncode(<String, Object>{
         'schemaVersion': TripStore.schemaVersion,
         'trips': trips,
         'unassignedPhotos': <Object>[],
-        'prefectureStates': <String, String>{},
+        'prefectureStates': prefectureStates,
       }),
     });
   }
@@ -521,6 +524,62 @@ void main() {
     await tester.ensureVisible(restoredHokkaido);
     await tester.pumpAndSettle();
     expect(find.bySemanticsLabel(RegExp('北海道、訪問済み')), findsOneWidget);
+  });
+
+  testWidgets('保存キーの都道府県状態が地図の着色とピッカーに実結線で反映される', (tester) async {
+    seedAppData(
+      <Map<String, Object>>[],
+      prefectureStates: const <String, String>{
+        '東京': 'visited',
+        '大阪': 'transit',
+      },
+    );
+
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
+    await tester.pumpAndSettle();
+
+    // 無接尾辞の保存キーが接尾辞付きラベルのタイルへ着色される。
+    expect(find.bySemanticsLabel(RegExp('東京都、訪問済み')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('大阪府、通過')), findsOneWidget);
+
+    // タップ経路も保存キーで結線され、ピッカーの現在状態が正しい。
+    final tokyoTapTarget = find.descendant(
+      of: find.byKey(const ValueKey<String>('prefecture-map-13')),
+      matching: find.byType(InkWell),
+    );
+    await tester.ensureVisible(tokyoTapTarget);
+    await tester.pumpAndSettle();
+    await tester.tap(tokyoTapTarget);
+    await tester.pumpAndSettle();
+
+    expect(find.text('東京の状態を選択'), findsOneWidget);
+    expect(find.text('現在: 訪問済み'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ListTile, '未訪問'));
+    await tester.pumpAndSettle();
+
+    // 保存は無接尾辞キーで行われ、既存の大阪状態は壊さない。
+    expect(find.bySemanticsLabel(RegExp('東京都、未訪問')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('大阪府、通過')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(KokoittaApp(cleanupRunner: _noopCleanup));
+    await tester.pumpAndSettle();
+
+    final restoredTokyo = find.descendant(
+      of: find.byKey(const ValueKey<String>('prefecture-map-13')),
+      matching: find.byType(InkWell),
+    );
+    await tester.ensureVisible(restoredTokyo);
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel(RegExp('東京都、未訪問')), findsOneWidget);
+    final restoredOsaka = find.descendant(
+      of: find.byKey(const ValueKey<String>('prefecture-map-27')),
+      matching: find.byType(InkWell),
+    );
+    await tester.ensureVisible(restoredOsaka);
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel(RegExp('大阪府、通過')), findsOneWidget);
   });
 
   testWidgets('busy中はデータ変更操作とバックアップメニューを無効化する', (tester) async {
