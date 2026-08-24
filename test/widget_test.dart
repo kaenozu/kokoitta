@@ -461,14 +461,16 @@ void main() {
       Map<String, Object?> args,
     ) async {
       final done = Completer<ByteData?>();
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .handlePlatformMessage(
-            channel.name,
-            const StandardMethodCodec().encodeMethodCall(
-              MethodCall(method, args),
+      unawaited(
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .handlePlatformMessage(
+              channel.name,
+              const StandardMethodCodec().encodeMethodCall(
+                MethodCall(method, args),
+              ),
+              done.complete,
             ),
-            done.complete,
-          );
+      );
       await done.future;
       await tester.pump();
     }

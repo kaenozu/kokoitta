@@ -1050,7 +1050,7 @@ extension _HomeDataActions on _HomePageState {
           photos: _data.unassignedPhotos,
         );
         await _commitData(createTripFromUnassigned(_data, trip));
-        if (mounted) Navigator.of(context).maybePop();
+        if (mounted) unawaited(Navigator.of(context).maybePop());
         _showMessage('旅行未設定の写真を新しい旅行にまとめました');
       });
     } catch (error) {

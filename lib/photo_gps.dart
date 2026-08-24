@@ -118,7 +118,7 @@ String _ascii(Uint8List bytes, int start, int length) {
   final ifd = start + ifdOffset;
   if (ifd + 2 > end) return null;
   final count = u16(ifd);
-  final gpsTag = 0x8825;
+  const gpsTag = 0x8825;
   int? gpsOffset;
   for (var i = 0; i < count; i++) {
     final entry = ifd + 2 + i * 12;

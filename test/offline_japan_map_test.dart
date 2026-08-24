@@ -85,10 +85,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: SingleChildScrollView(
-            child: SizedBox(
-              width: 360,
-              child: OfflineJapanMap(states: states),
-            ),
+            child: SizedBox(width: 360, child: OfflineJapanMap(states: states)),
           ),
         ),
       ),

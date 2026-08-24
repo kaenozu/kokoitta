@@ -316,7 +316,7 @@ void main() {
 
   test('高圧縮率の巨大JSONを模したZIPを拒否する', () async {
     final archive = Archive();
-    final hugeDeclaredSize = BackupService.maxTripsBytes + 100;
+    const hugeDeclaredSize = BackupService.maxTripsBytes + 100;
     final tripsContent = utf8.encode(
       jsonEncode(<String, Object>{
         'trips': <Object>[],
