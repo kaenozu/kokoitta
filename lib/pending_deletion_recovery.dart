@@ -6,11 +6,12 @@ import 'pending_deletion.dart';
 
 /// 起動時にstaged削除を現在のAppDataと照合して回復する。
 ///
-/// deleteTripは写真退避とstaged manifest保存後にAppDataをcommitし、その後で
-/// manifestをpendingへ更新する。stagedが残っている場合、AppDataに旅行が
-/// 存在するかでcommit前後を判定する。
+/// deleteTripはstaged manifest保存後に写真退避を行い、その後でAppDataを
+/// commitし、最後にmanifestをpendingへ更新する。stagedが残っている場合、
+/// AppDataに旅行が存在するかでcommit前後を判定する。
 ///
 /// - 旅行が存在する: commit前として写真を元pathへ戻し、manifestを除去する。
+///   移動済み/未移動のitemはoriginal/trashの存在判定で区別する。
 /// - 旅行が存在しない: commit後として写真をtrashに維持し、pendingへ進める。
 /// - 物理状態が曖昧: 変更せずmanifestを保持する。
 Future<List<PendingDeletionOperation>> recoverPendingDeletions({

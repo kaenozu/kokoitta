@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:collection/collection.dart';
 import 'image_decode.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -23,6 +24,7 @@ import 'photo_gps.dart';
 import 'photo_quota.dart';
 import 'photo_viewer.dart';
 import 'import_progress.dart';
+import 'safe_extension.dart';
 import 'storage_cleanup.dart';
 import 'trip_store.dart';
 import 'validators.dart';
@@ -139,9 +141,9 @@ class _HomePageState extends State<HomePage> {
         widget.cleanupRunner ?? (data) => StorageCleanup.run(appData: data);
     // Release/Profileでは必ず回復対応の初期化を使う。旧経路はdebugで明示的に
     // 比較検証する場合だけ有効化できる。
-    final useLegacyInitialization =
+    const useLegacyInitialization =
         kDebugMode &&
-        const bool.fromEnvironment('KOKOITTA_USE_LEGACY_INITIALIZATION');
+        bool.fromEnvironment('KOKOITTA_USE_LEGACY_INITIALIZATION');
     _initialization = useLegacyInitialization
         ? _initialize()
         : _initializeWithPendingRecovery();

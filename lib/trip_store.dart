@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -35,73 +36,151 @@ class TripStore {
   /// 欠損情報は AppData に含まれない。UI への通知・復旧はこの別経路を使う。
   List<MissingPhoto> missingPhotos = const <MissingPhoto>[];
 
+  /// 現在の load()/save() 処理内でのみ有効なパス実在キャッシュ。
+  ///
+  /// 写真1枚ごとの同期 stat をUI isolateで繰り返すと最大300回分のファイル
+  /// I/Oがjank要因になるため、load()/save() の冒頭でバックグラウンドisolate
+  /// により一括算出する。キャッシュ外のパスは従来どおり同期的に判定する
+  /// （legacy移行経路など低頻度経路のフォールバック）。
+  Map<String, bool> _existenceCache = const <String, bool>{};
+
+  bool _exists(String path) {
+    final cached = _existenceCache[path];
+    if (cached != null) return cached;
+    return File(path).existsSync();
+  }
+
+  /// 保存JSON文字列群に含まれる全写真パスの実在を一括判定する。
+  ///
+  /// [resolveExistenceInIsolate] をfalseにすると同期的に判定する。テストの
+  /// FakeAsync環境ではisolate結果が完了せずload()が停止するため、widget
+  /// テスト側で無効化する。stat自体はパス集合確定後にまとめて行う。
+  static bool resolveExistenceInIsolate = true;
+
+  static Future<Map<String, bool>> _resolveExistence(
+    List<String> rawJsons,
+  ) async {
+    if (rawJsons.isEmpty) return const <String, bool>{};
+
+    Set<String> collectPaths() {
+      final paths = <String>{};
+      for (final raw in rawJsons) {
+        Object? decoded;
+        try {
+          decoded = jsonDecode(raw);
+        } on FormatException {
+          continue;
+        }
+        void collect(Object? node) {
+          if (node is Map<String, dynamic>) {
+            final path = node['path'];
+            if (path is String && path.isNotEmpty) paths.add(path);
+            for (final value in node.values) {
+              if (value is List || value is Map) collect(value);
+            }
+          } else if (node is List) {
+            for (final value in node) {
+              if (value is List || value is Map) collect(value);
+            }
+          }
+        }
+
+        collect(decoded);
+      }
+      return paths;
+    }
+
+    Map<String, bool> statAll(Set<String> paths) => <String, bool>{
+      for (final path in paths) path: File(path).existsSync(),
+    };
+
+    if (resolveExistenceInIsolate) {
+      return statAll(await Isolate.run(collectPaths));
+    }
+    return statAll(collectPaths());
+  }
+
   Future<AppData> load() async {
     missingPhotos = const <MissingPhoto>[];
     final preferences = await _preferencesFactory();
 
-    final pending = preferences.getString(pendingKey);
-    if (pending != null) {
-      try {
-        final recovered = _decode(pending);
-        // 欠損写真がある間は正規化保存をスキップする。_decode は欠損を読み飛ばす
-        // ため、そのまま _encode すると欠損レコードが消えて再割り当て不能になる。
+    try {
+      final pending = preferences.getString(pendingKey);
+      if (pending != null) {
+        _existenceCache = await _resolveExistence(<String>[pending]);
+        try {
+          final recovered = _decode(pending);
+          // 欠損写真がある間は正規化保存をスキップする。_decode は欠損を読み飛ばす
+          // ため、そのまま _encode すると欠損レコードが消えて再割り当て不能になる。
+          if (missingPhotos.isEmpty) {
+            final canonical = _canonicalize(recovered);
+            final encoded = jsonEncode(_encode(canonical));
+            await _writeCanonical(preferences, encoded);
+          }
+          return recovered;
+        } on FormatException {
+          await preferences.remove(pendingKey);
+        }
+      }
+
+      final stored = preferences.getString(dataKey);
+      if (stored != null) {
+        _existenceCache = await _resolveExistence(<String>[stored]);
+        final recovered = _decode(stored);
+        // 欠損写真がある間は正規化保存をスキップする（欠損レコード保持のため）。
         if (missingPhotos.isEmpty) {
           final canonical = _canonicalize(recovered);
-          final encoded = jsonEncode(_encode(canonical));
-          await _writeCanonical(preferences, encoded);
-        }
-        return recovered;
-      } on FormatException {
-        await preferences.remove(pendingKey);
-      }
-    }
-
-    final stored = preferences.getString(dataKey);
-    if (stored != null) {
-      final recovered = _decode(stored);
-      // 欠損写真がある間は正規化保存をスキップする（欠損レコード保持のため）。
-      if (missingPhotos.isEmpty) {
-        final canonical = _canonicalize(recovered);
-        final canonicalEncoded = jsonEncode(_encode(canonical));
-        if (canonicalEncoded != stored) {
-          final written = await preferences.setString(
-            dataKey,
-            canonicalEncoded,
-          );
-          if (!written) {
-            throw FileSystemException('保存データを書き込めませんでした');
+          final canonicalEncoded = jsonEncode(_encode(canonical));
+          if (canonicalEncoded != stored) {
+            final written = await preferences.setString(
+              dataKey,
+              canonicalEncoded,
+            );
+            if (!written) {
+              throw FileSystemException('保存データを書き込めませんでした');
+            }
           }
         }
+        return recovered;
       }
-      return recovered;
-    }
 
-    final migrated = _loadIntermediate(preferences) ?? _loadLegacy(preferences);
-    await save(migrated);
-    await preferences.remove(intermediateTripsKey);
-    await preferences.remove(intermediatePrefectureStatesKey);
-    await preferences.remove(legacyTripsKey);
-    await preferences.remove(legacyPrefectureStatesKey);
-    return migrated;
+      final migrated =
+          _loadIntermediate(preferences) ?? _loadLegacy(preferences);
+      await save(migrated);
+      await preferences.remove(intermediateTripsKey);
+      await preferences.remove(intermediatePrefectureStatesKey);
+      await preferences.remove(legacyTripsKey);
+      await preferences.remove(legacyPrefectureStatesKey);
+      return migrated;
+    } finally {
+      _existenceCache = const <String, bool>{};
+    }
   }
 
   Future<void> save(AppData data) async {
     final preferences = await _preferencesFactory();
-    final canonical = _canonicalize(data);
-    final encoded = jsonEncode(_encode(canonical));
+    try {
+      final canonical = _canonicalize(data);
+      final encoded = jsonEncode(_encode(canonical));
 
-    // 欠損写真のレコードを新しい保存 JSON に保持する。
-    // load() は欠損レコードを読み飛ばすため、そのまま保存すると欠損レコード
-    // が消えて再割り当て不能になる（PR #108 の独立レビューで発見した
-    // エッジケース: 欠損中の通常操作で欠損レコードが意図せず消える）。
-    final preserved = await _preserveMissingPhotoRecords(preferences, encoded);
+      // 欠損写真のレコードを新しい保存 JSON に保持する。
+      // load() は欠損レコードを読み飛ばすため、そのまま保存すると欠損レコード
+      // が消えて再割り当て不能になる（PR #108 の独立レビューで発見した
+      // エッジケース: 欠損中の通常操作で欠損レコードが意図せず消える）。
+      final preserved = await _preserveMissingPhotoRecords(
+        preferences,
+        encoded,
+      );
 
-    final pendingWritten = await preferences.setString(pendingKey, preserved);
-    if (!pendingWritten) {
-      throw FileSystemException('保存準備データを書き込めませんでした');
+      final pendingWritten = await preferences.setString(pendingKey, preserved);
+      if (!pendingWritten) {
+        throw FileSystemException('保存準備データを書き込めませんでした');
+      }
+
+      await _writeCanonical(preferences, preserved);
+    } finally {
+      _existenceCache = const <String, bool>{};
     }
-
-    await _writeCanonical(preferences, preserved);
   }
 
   /// 既存の保存 JSON に存在し、物理ファイルが存在しない写真レコード
@@ -133,6 +212,9 @@ class TripStore {
         newDecoded['schemaVersion'] != schemaVersion) {
       return encoded;
     }
+
+    // 欠損判定のstatをUI isolate外へ追い出す。
+    _existenceCache = await _resolveExistence(<String>[stored]);
 
     // 新しい保存 JSON の写真 ID 集合と旅行 ID → 旅行マップ。
     final newPhotoIds = <String>{};
@@ -177,7 +259,7 @@ class TripStore {
         final path = photo['path'];
         if (id is! String || path is! String) continue;
         if (newPhotoIds.contains(id)) continue;
-        if (File(path).existsSync()) continue; // 実在する写真は削除扱い。復元しない。
+        if (_exists(path)) continue; // 実在する写真は削除扱い。復元しない。
         final record = Map<String, Object?>.from(photo);
         if (tripId == null) {
           missingUnassigned.add(record);
@@ -520,7 +602,7 @@ class TripStore {
       final normalizedPath = path.replaceAll('\\', '/');
       if (claimedPaths.contains(normalizedPath)) continue;
       final file = File(path);
-      if (!file.existsSync()) {
+      if (!_exists(path)) {
         missingPhotos = <MissingPhoto>[
           ...missingPhotos,
           MissingPhoto(
@@ -574,7 +656,7 @@ class TripStore {
         continue;
       }
       final file = File(path);
-      if (!file.existsSync()) {
+      if (!_exists(path)) {
         missingPhotos = <MissingPhoto>[
           ...missingPhotos,
           MissingPhoto(
@@ -772,7 +854,7 @@ class TripStore {
       final normalizedPath = path.replaceAll('\\', '/');
       if (claimedPaths.contains(normalizedPath)) continue;
       final file = File(path);
-      if (!file.existsSync()) continue;
+      if (!_exists(path)) continue;
       claimedPaths.add(normalizedPath);
       photos.add(Photo(id: legacyPhotoId(path), file: file));
     }

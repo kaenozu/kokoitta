@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import 'backup_invariants.dart';
 import 'models.dart';
 import 'photo.dart';
+import 'safe_extension.dart';
 import 'validators.dart';
 
 part 'backup_restore.dart';
@@ -93,7 +94,7 @@ class BackupService {
           throw const FormatException('バックアップ対象の写真容量が上限を超えています');
         }
         final archivePath =
-            'photos/$group-${index.toString().padLeft(3, '0')}${_safeExtension(file.path)}';
+            'photos/$group-${index.toString().padLeft(3, '0')}${safeFileExtension(file.path)}';
         final digest = await sha256.bind(file.openRead()).first;
         checksums[archivePath] = digest.toString();
         archiveFiles.add((file: file, archivePath: archivePath));

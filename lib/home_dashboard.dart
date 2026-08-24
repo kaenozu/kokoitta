@@ -408,7 +408,7 @@ class HomeMapDashboard extends StatelessWidget {
               final columns = constraints.maxWidth >= 560 && textScale <= 1.3
                   ? 2
                   : 1;
-              final gap = KokoittaSpacing.md;
+              const gap = KokoittaSpacing.md;
               final itemWidth = columns == 1
                   ? constraints.maxWidth
                   : (constraints.maxWidth - gap) / columns;

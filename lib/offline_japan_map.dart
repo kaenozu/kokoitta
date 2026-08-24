@@ -5,6 +5,15 @@ import 'package:flutter/material.dart';
 typedef PrefectureStateTapHandler =
     Future<void> Function(String name, String currentState);
 
+/// 地図上の正式名称（「東京都」等の接尾辞付き）を、保存キー
+/// （validators.dart の validPrefectures と同じ無接尾辞表記）へ変換する。
+///
+/// 北海道のみ接尾辞を持たないためそのまま返す。
+String prefectureStateKey(String mapName) {
+  if (mapName == '北海道') return mapName;
+  return mapName.substring(0, mapName.length - 1);
+}
+
 /// Supplies the persistence-aware prefecture action without coupling the map
 /// widget to the application's storage implementation.
 class PrefectureMapActions extends InheritedWidget {
@@ -71,12 +80,15 @@ class OfflineJapanMap extends StatelessWidget {
                   clipBehavior: Clip.none,
                   children: _prefectures
                       .map((prefecture) {
-                        final state = states[prefecture.name] ?? 'unvisited';
+                        final state =
+                            states[prefectureStateKey(prefecture.name)] ??
+                            'unvisited';
+                        final stateKey = prefectureStateKey(prefecture.name);
                         final VoidCallback? onTap;
                         if (onPrefectureTap != null) {
-                          onTap = () => onPrefectureTap!(prefecture.name);
+                          onTap = () => onPrefectureTap!(stateKey);
                         } else if (inheritedAction != null) {
-                          onTap = () => inheritedAction(prefecture.name, state);
+                          onTap = () => inheritedAction(stateKey, state);
                         } else {
                           onTap = null;
                         }

@@ -236,7 +236,7 @@ void main() {
     await setSurface(tester, size: const Size(412, 915));
     await tester.pumpWidget(
       buildDashboard(
-        states: const <String, String>{'北海道': 'visited', '埼玉県': 'transit'},
+        states: const <String, String>{'北海道': 'visited', '埼玉': 'transit'},
         summary: const HomePrefectureSummary(
           visited: 1,
           planned: 1,

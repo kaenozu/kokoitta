@@ -123,14 +123,16 @@ Future<void> _sendImportResult(
   MethodChannel channel,
   Map<String, Object?> arguments,
 ) async {
-  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-      .handlePlatformMessage(
-        channel.name,
-        const StandardMethodCodec().encodeMethodCall(
-          MethodCall('importResult', arguments),
+  unawaited(
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(
+          channel.name,
+          const StandardMethodCodec().encodeMethodCall(
+            MethodCall('importResult', arguments),
+          ),
+          null,
         ),
-        null,
-      );
+  );
   await tester.pump();
 }
 

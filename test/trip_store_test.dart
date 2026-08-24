@@ -891,9 +891,7 @@ void main() {
 
     // 欠損中に通常操作（旅行タイトル変更）を伴う保存を行う。
     final changed = loaded.copyWith(
-      trips: [
-        loaded.trips.single.copyWith(title: '欠損写真v2'),
-      ],
+      trips: [loaded.trips.single.copyWith(title: '欠損写真v2')],
     );
     await store.save(changed);
 
@@ -960,9 +958,7 @@ void main() {
     // 写真を削除して保存。
     await store.save(
       loaded.copyWith(
-        trips: [
-          loaded.trips.single.copyWith(photos: const <Photo>[]),
-        ],
+        trips: [loaded.trips.single.copyWith(photos: const <Photo>[])],
       ),
     );
 

@@ -100,9 +100,11 @@ void main() {
 
     test('beginRestorePrepare rejects during mutation', () async {
       final hold = Completer<void>();
-      coordinator.runMutation(() async {
-        await hold.future;
-      });
+      unawaited(
+        coordinator.runMutation(() async {
+          await hold.future;
+        }),
+      );
       await Future<void>.delayed(Duration.zero);
       expect(() => coordinator.beginRestorePrepare(), throwsStateError);
       hold.complete();
@@ -121,15 +123,17 @@ void main() {
     });
 
     test('same-tick runMutation then beginRestorePrepare rejected', () {
-      coordinator.runMutation(() async {});
+      unawaited(coordinator.runMutation(() async {}));
       expect(() => coordinator.beginRestorePrepare(), throwsStateError);
     });
 
     test('queued mutation before execution blocks restore', () async {
       final hold = Completer<void>();
-      coordinator.runMutation(() async {
-        await hold.future;
-      });
+      unawaited(
+        coordinator.runMutation(() async {
+          await hold.future;
+        }),
+      );
       expect(() => coordinator.beginRestorePrepare(), throwsStateError);
       hold.complete();
       await Future<void>.delayed(Duration.zero);
@@ -229,9 +233,11 @@ void main() {
       coordinator.beginRestorePrepare();
       coordinator.enterRestoreConfirm();
       final hold = Completer<void>();
-      coordinator.runRestoreCommit(() async {
-        await hold.future;
-      });
+      unawaited(
+        coordinator.runRestoreCommit(() async {
+          await hold.future;
+        }),
+      );
       await Future<void>.delayed(Duration.zero);
       expect(() => coordinator.endRestore(), throwsStateError);
       hold.complete();
@@ -296,7 +302,7 @@ void main() {
         statuses,
         containsAllInOrder([OperationStatus.mutating, OperationStatus.idle]),
       );
-      sub.cancel();
+      await sub.cancel();
     });
 
     test('isBusy is true during mutating', () async {
@@ -369,7 +375,7 @@ void main() {
       'backup snapshot is not affected by mutation submitted during backup',
       () async {
         final coordinator = OperationCoordinator();
-        var data = <String>['a'];
+        final data = <String>['a'];
         final backupStarted = Completer<void>();
 
         final backup = coordinator.runBackup(() async {
@@ -436,7 +442,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(statuses, contains(OperationStatus.failed));
       expect(statuses.last, OperationStatus.idle);
-      sub.cancel();
+      await sub.cancel();
       coordinator.dispose();
     });
   });

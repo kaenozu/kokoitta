@@ -366,7 +366,7 @@ extension _HomeDataActions on _HomePageState {
             throw const FileSystemException('一時ファイルが見つかりません');
           }
           final destination = File(
-            '${photosDirectory.path}/${createEntityId('shared')}-${index.toString().padLeft(3, '0')}${_safeExtension(imported.name)}',
+            '${photosDirectory.path}/${createEntityId('shared')}-${index.toString().padLeft(3, '0')}${safeFileExtension(imported.name)}',
           );
           final copiedFile = await source.copy(destination.path);
           copied.add(
@@ -765,7 +765,7 @@ extension _HomeDataActions on _HomePageState {
         throw const FileSystemException('選択した写真を読み込めませんでした');
       }
       final destination = File(
-        '${photosDirectory.path}/${createEntityId('reassign')}${_safeExtension(picked.name)}',
+        '${photosDirectory.path}/${createEntityId('reassign')}${safeFileExtension(picked.name)}',
       );
       copied = await source.copy(destination.path);
       final fileForStore = copied;
@@ -1018,21 +1018,19 @@ extension _HomeDataActions on _HomePageState {
           _showMessageNow('Undo期限が切れたため、写真を完全に削除しました');
         }
       });
-    } on StateError catch (error) {
+    } on OperationConflictError {
       // 起動時cleanup等が既にキューにある場合は、ユーザーへ誤エラーを表示せず
       // 短時間後に再試行する。恒久的な失敗は次回起動のrecoverで再処理される。
-      if (error.message.contains('Cleanup already in progress')) {
-        developer.log(
-          'pending deletion finalize deferred: cleanup busy',
-          name: 'kokoitta',
-        );
-        _pendingUndoTimers[operationId]?.cancel();
-        _pendingUndoTimers[operationId] = Timer(const Duration(seconds: 2), () {
-          _pendingUndoTimers.remove(operationId);
-          unawaited(_finalizePendingDeletion(operationId));
-        });
-        return;
-      }
+      developer.log(
+        'pending deletion finalize deferred: cleanup busy',
+        name: 'kokoitta',
+      );
+      _pendingUndoTimers[operationId]?.cancel();
+      _pendingUndoTimers[operationId] = Timer(const Duration(seconds: 2), () {
+        _pendingUndoTimers.remove(operationId);
+        unawaited(_finalizePendingDeletion(operationId));
+      });
+    } on StateError catch (error) {
       if (mounted) _showError('削除済み写真の回収', error);
     } catch (error) {
       if (mounted) _showError('削除済み写真の回収', error);
@@ -1052,7 +1050,7 @@ extension _HomeDataActions on _HomePageState {
           photos: _data.unassignedPhotos,
         );
         await _commitData(createTripFromUnassigned(_data, trip));
-        if (mounted) Navigator.of(context).maybePop();
+        if (mounted) unawaited(Navigator.of(context).maybePop());
         _showMessage('旅行未設定の写真を新しい旅行にまとめました');
       });
     } catch (error) {

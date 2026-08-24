@@ -106,10 +106,12 @@ extension _HomeBackupActions on _HomePageState {
               : '復元は完了しましたが、旧写真$cleanupFailures枚の削除に失敗しました',
         );
       });
-      if (mounted) _coordinator.endRestore();
+      // CoordinatorはWidgetより長生きするため、セッション解放はmountedに
+      // 依存させない。解除を欠かすと以後の全mutationがStateErrorで拒否される。
+      _coordinator.endRestore();
     } catch (error) {
       if (prepared != null) await prepared.discard();
-      if (restoreSessionStarted && mounted) _coordinator.endRestore();
+      if (restoreSessionStarted) _coordinator.endRestore();
       if (!mounted) return;
       _showError('復元', error);
     }
@@ -213,22 +215,5 @@ extension _HomeBackupActions on _HomePageState {
     if (error is FileSystemException) return error.message;
     if (error is StateError) return error.message.toString();
     return '予期しないエラーが発生しました';
-  }
-
-  String _safeExtension(String path) {
-    final name = path.split(RegExp(r'[/\\]')).last;
-    final separator = name.lastIndexOf('.');
-    if (separator < 0) return '.jpg';
-    final extension = name.substring(separator).toLowerCase();
-    return RegExp(r'^\.[a-z0-9]{1,5}$').hasMatch(extension)
-        ? extension
-        : '.jpg';
-  }
-}
-
-extension _FirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull {
-    final iterator = this.iterator;
-    return iterator.moveNext() ? iterator.current : null;
   }
 }

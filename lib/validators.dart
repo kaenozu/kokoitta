@@ -56,6 +56,11 @@ const Set<String> validPrefectureStates = <String>{
 
 const int maxTripTitleLength = 200;
 
+/// 旅行タイトルを正規化する。空になった場合はnullを返す。
+///
+/// 上限超過分は切り詰める（仕様: 入力経路・バックアップ復元の双方で
+/// 同一の正規化を適用し、保存データ長を保証する）。切り詰めは不可逆だが、
+/// タイトルは表示専用メタデータであり写真データには影響しない。
 String? normalizeTripTitle(String value) {
   final withSpaces = value.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), ' ');
   final collapsed = withSpaces.split(RegExp(r'\s+')).join(' ');
