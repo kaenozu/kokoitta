@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/models.dart';
 import 'package:kokoitta_app/photo.dart';
 import 'package:kokoitta_app/photo_gps.dart';
+import 'package:kokoitta_app/trip_store.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 Uint8List jpegWithGps(double lat, double lon) {
   final tiff = Uint8List(128);
@@ -66,7 +68,43 @@ Uint8List jpegWithGps(double lat, double lon) {
   ]);
 }
 
+Uint8List jpegWithGpsAfterExifWithoutGps() {
+  final noGpsExif = <int>[
+    ...'Exif\x00\x00'.codeUnits,
+    0x4d,
+    0x4d,
+    0x00,
+    0x2a,
+    0x00,
+    0x00,
+    0x00,
+    0x08,
+    0x00,
+    0x00,
+  ];
+  final noGpsSegment = <int>[
+    0xff,
+    0xe1,
+    (noGpsExif.length + 2) >> 8,
+    (noGpsExif.length + 2) & 0xff,
+    ...noGpsExif,
+  ];
+  final gps = jpegWithGps(35.68, 139.76);
+  return Uint8List.fromList(<int>[
+    0xff,
+    0xd8,
+    ...noGpsSegment,
+    ...gps.sublist(2),
+  ]);
+}
+
 void main() {
+  test('GPSのない先行EXIFセグメントがあっても後続EXIFからGPSを読む', () {
+    final gps = readJpegGpsBytes(jpegWithGpsAfterExifWithoutGps());
+    expect(gps, isNotNull);
+    expect(prefectureFromGps(gps!.latitude, gps.longitude), '東京');
+  });
+
   test('JPEG EXIF GPSを読み取り、代表座標を都道府県へ変換する', () {
     final gps = readJpegGpsBytes(jpegWithGps(35.68, 139.76));
     expect(gps?.latitude, closeTo(35.6666, 0.02));
@@ -85,6 +123,36 @@ void main() {
     expect(prefectureFromGps(91, 139), isNull);
     expect(prefectureFromGps(35, 181), isNull);
     expect(prefectureFromGps(0, 0), isNull);
+  });
+
+  test('GPSで反映した地図状態は保存と再読み込み後も保持される', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final directory = await Directory.systemTemp.createTemp(
+      'kokoitta-gps-persistence-test',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final file = await File(
+      '${directory.path}/tokyo.jpg',
+    ).writeAsBytes(jpegWithGps(35.68, 139.76));
+    final photo = Photo.fromFile(file);
+    final imported = await applyGpsPrefectureStates(
+      AppData(
+        trips: <Trip>[
+          Trip(id: 'trip-1', title: '東京旅行', photos: <Photo>[photo]),
+        ],
+        unassignedPhotos: const <Photo>[],
+        prefectureStates: const <String, String>{},
+      ),
+      <Photo>[photo],
+    );
+
+    final firstStore = TripStore();
+    await firstStore.save(imported);
+    final restartedStore = TripStore();
+    final restored = await restartedStore.load();
+
+    expect(restored.trips.single.photos.single.id, photo.id);
+    expect(restored.prefectureStates['東京'], 'visited');
   });
 
   test('既存の手動状態は上書きせず、GPS写真だけ未設定都道府県を追加する', () async {

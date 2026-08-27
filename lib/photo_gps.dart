@@ -34,7 +34,8 @@ Future<({double latitude, double longitude})?> readJpegGps(File file) async {
     if (marker == 0xe1 &&
         length >= 8 &&
         _ascii(bytes, offset + 2, 6) == 'Exif\x00\x00') {
-      return _readTiffGps(bytes, offset + 8, offset + length);
+      final gps = _readTiffGps(bytes, offset + 8, offset + length);
+      if (gps != null) return gps;
     }
     offset += length;
   }

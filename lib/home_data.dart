@@ -863,9 +863,14 @@ extension _HomeDataActions on _HomePageState {
     await photosDirectory.create(recursive: true);
     final copied = <Photo>[];
     final failures = <ImportFailure>[];
+    final seenSourcePaths = <String>{};
     for (var index = 0; index < selected.length; index++) {
       try {
         final image = selected[index];
+        if (!seenSourcePaths.add(image.path)) {
+          onProgress(index + 1, copied.length, failures.length);
+          continue;
+        }
         final source = File(image.path);
         final safeName = image.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
         final destination = File(
