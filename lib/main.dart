@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:collection/collection.dart';
 import 'image_decode.dart';
 import 'package:flutter/services.dart';
@@ -33,7 +34,13 @@ part 'home_data.dart';
 part 'home_view.dart';
 part 'home_backup.dart';
 
-void main() => runApp(const KokoittaApp());
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Ad initialization is deliberately non-blocking; storage and the map do
+  // not depend on network availability or SDK startup.
+  unawaited(MobileAds.instance.initialize());
+  runApp(const KokoittaApp());
+}
 
 /// 起動時cleanupの実行関数。キュー直列化の対象となる写真ファイル削除処理。
 typedef CleanupRunner = Future<void> Function(AppData data);

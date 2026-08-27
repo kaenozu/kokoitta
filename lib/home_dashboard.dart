@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'design/kokoitta_components.dart';
 import 'design/kokoitta_design_system.dart';
 import 'offline_japan_map.dart';
+import 'monetization/ad_banner.dart';
 
 @immutable
 class HomePrefectureSummary {
@@ -147,6 +148,10 @@ class HomeMapDashboard extends StatelessWidget {
             KokoittaSpacing.xxl,
           ),
           children: <Widget>[
+            const Padding(
+              padding: EdgeInsets.only(bottom: KokoittaSpacing.md),
+              child: MonetizationBanner(),
+            ),
             if (missingPhotoCount > 0 && onMissingPhotosTap != null)
               _buildMissingPhotosBanner(context),
             Center(

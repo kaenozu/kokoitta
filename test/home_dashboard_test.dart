@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kokoitta_app/app_theme.dart';
+import 'package:kokoitta_app/monetization/ad_banner.dart';
 import 'package:kokoitta_app/offline_japan_map.dart';
 
 void main() {
@@ -284,6 +285,26 @@ void main() {
     await tester.pump();
 
     expect(find.textContaining('見つかりませんでした'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('home dashboard keeps a non-blocking free monetization notice', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildKokoittaTheme(Brightness.light),
+        home: const Scaffold(body: MonetizationBanner()),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('広告で無料提供を続けています'), findsOneWidget);
+    expect(find.text('写真の追加や地図の利用は無料です。広告が読み込めない場合もそのまま使えます。'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('monetization-banner')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 }
