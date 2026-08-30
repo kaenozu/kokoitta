@@ -837,7 +837,7 @@ extension _HomeDataActions on _HomePageState {
       builder: (dialogContext) => AlertDialog(
         title: Text(label),
         content: Text(
-          '破棄すると、この写真の記録（${missing.path}）が保存データから削除されます。'
+          '破棄すると、この写真の記録が保存データから削除されます。'
           '元の写真ファイルが端末にある場合は、先に「選び直す」で再登録できます。',
         ),
         actions: <Widget>[
