@@ -8,6 +8,7 @@ void main() {
     () {
       final properties = File('android/gradle.properties').readAsStringSync();
       final settings = File('android/settings.gradle.kts').readAsStringSync();
+      final rootBuild = File('android/build.gradle.kts').readAsStringSync();
       final appBuild = File('android/app/build.gradle.kts').readAsStringSync();
       final ci = File('.github/workflows/ci.yml').readAsStringSync();
       final release = File('.github/workflows/release.yml').readAsStringSync();
@@ -20,6 +21,10 @@ void main() {
       expect(
         settings,
         contains('id("com.android.application") version "9.0.1"'),
+      );
+      expect(
+        rootBuild,
+        contains('org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20'),
       );
       expect(appBuild, isNot(contains('org.jetbrains.kotlin.android')));
       expect(ci, contains("flutter-version: '3.47.1'"));
