@@ -170,6 +170,9 @@ jobs:
       - name: Test
         run: flutter test
 
+      - name: Android unit tests
+        run: ./android/gradlew -p android :app:testDebugUnitTest --no-daemon
+
       - name: Log release info
         run: |
           echo "============================================"
