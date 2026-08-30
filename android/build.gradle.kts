@@ -1,5 +1,17 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        // AGP 9.0.1 ships KGP 2.2.10 for built-in Kotlin, while Flutter
+        // 3.47.1 requires at least 2.2.20. Override only the KGP runtime
+        // dependency; do not re-apply org.jetbrains.kotlin.android.
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20")
+    }
+}
+
 allprojects {
     repositories {
         google()
