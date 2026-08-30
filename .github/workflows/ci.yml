@@ -55,6 +55,7 @@ jobs:
           bash -n test/verify_release_artifacts_test.sh
           bash -n test/validate_workflow_security.sh
           bash -n test/validate_release_ref_resolution.sh
+          bash -n test/validate_all_workflow_pins.sh
 
       - name: Test release validation
         run: |
@@ -65,6 +66,7 @@ jobs:
         run: |
           bash test/validate_workflow_security.sh
           bash test/validate_release_ref_resolution.sh
+          bash test/validate_all_workflow_pins.sh
 
       - name: Build debug APK
         run: flutter build apk --debug
