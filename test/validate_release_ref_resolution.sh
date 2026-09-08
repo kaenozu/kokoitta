@@ -47,7 +47,7 @@ assert_contains 'git merge-base --is-ancestor "$EVENT_COMMIT_SHA" origin/main' \
   "event commit must be contained in trusted main"
 assert_contains "ref: \${{ needs.validate.outputs.commit_sha }}" \
   "release job checks out the validated commit"
-assert_contains "flutter-version: '3.44.0'" \
+assert_contains "flutter-version: '3.47.1'" \
   "release jobs use the CI Flutter version"
 assert_contains "java-version: '17'" \
   "release jobs use Java 17"

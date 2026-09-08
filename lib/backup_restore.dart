@@ -253,13 +253,16 @@ extension _BackupRestoreOperations on BackupService {
 }
 
 Future<File?> _pickBackupFile() async {
-  final result = await FilePicker.platform.pickFiles(
+  final selected = await FilePicker.pickFile(
     type: FileType.custom,
     allowedExtensions: const <String>['zip'],
-    withData: false,
   );
-  if (result == null) return null;
-  return File(result.xFiles.single.path);
+  if (selected == null) return null;
+  final path = selected.path;
+  if (path == null || path.isEmpty) {
+    throw const FormatException('バックアップファイルのパスを取得できません');
+  }
+  return File(path);
 }
 
 Map<String, dynamic> _decodeMap(ArchiveFile file, String name) {
